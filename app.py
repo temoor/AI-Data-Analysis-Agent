@@ -77,13 +77,13 @@ if uploaded_file is not None:
     # ------------------------------
 
     st.subheader("📊 Data Visualisation")
-    st.write(df.dtypes)
+    
 
-    st.write("All Columns:")
-    st.write(df.columns)
+    
+    
 
     numeric_columns = df.select_dtypes(include="number").columns
-    st.write(numeric_columns)
+    
 
     if len(numeric_columns) > 0:
 
@@ -93,9 +93,14 @@ if uploaded_file is not None:
         )
 
         chart = st.selectbox(
-            "Choose Chart",
-            ["Bar Chart", "Histogram", "Box Plot"]
-        )
+    "Choose Chart",
+    [
+        "Bar Chart",
+        "Histogram",
+        "Box Plot",
+        "Correlation Heatmap"
+    ]
+)
 
         import plotly.express as px
 
@@ -127,4 +132,16 @@ if uploaded_file is not None:
             )
 
             st.plotly_chart(fig, use_container_width=True)
+            elif chart == "Correlation Heatmap":
+
+    correlation = df[numeric_columns].corr()
+
+    fig = px.imshow(
+        correlation,
+        text_auto=True,
+        color_continuous_scale="RdBu_r",
+        title="Correlation Heatmap"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
          
