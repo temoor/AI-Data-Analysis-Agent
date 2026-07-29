@@ -76,9 +76,10 @@ if uploaded_file is not None:
     # Charts
     # ------------------------------
 
-    st.subheader("📊 Data Visualisation")
-        numeric_columns = df.select_dtypes(include="number").columns
+        st.subheader("📊 Data Visualisation")
 
+    numeric_columns = df.select_dtypes(include="number").columns
+        
     if len(numeric_columns) > 0:
 
         selected_column = st.selectbox(
