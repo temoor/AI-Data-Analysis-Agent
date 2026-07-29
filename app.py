@@ -77,6 +77,8 @@ if uploaded_file is not None:
     # ------------------------------
 
     st.subheader("📊 Data Visualisation")
+    st.write("All Columns:")
+st.write(df.columns)
 
     numeric_columns = df.select_dtypes(include="number").columns
 
