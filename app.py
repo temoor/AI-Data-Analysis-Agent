@@ -123,7 +123,7 @@ if uploaded_file is not None:
 
             st.plotly_chart(fig, use_container_width=True)
 
-        elif chart == "Box Plot":
+                      elif chart == "Box Plot":
 
             fig = px.box(
                 df,
@@ -132,16 +132,18 @@ if uploaded_file is not None:
             )
 
             st.plotly_chart(fig, use_container_width=True)
-            elif chart == "Correlation Heatmap":
 
-    correlation = df[numeric_columns].corr()
+        elif chart == "Correlation Heatmap":
 
-    fig = px.imshow(
-        correlation,
-        text_auto=True,
-        color_continuous_scale="RdBu_r",
-        title="Correlation Heatmap"
-    )
+            correlation = df[numeric_columns].corr()
+
+            fig = px.imshow(
+                correlation,
+                text_auto=True,
+                color_continuous_scale="RdBu_r",
+                title="Correlation Heatmap"
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
     st.plotly_chart(fig, use_container_width=True)
          
