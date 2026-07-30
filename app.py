@@ -62,3 +62,67 @@ if uploaded_file is not None:
     # Descriptive Statistics
     st.subheader("📈 Descriptive Statistics")
     st.dataframe(df.describe(include="all"))
+# --------------------------------
+# Data Visualization
+# --------------------------------
+st.subheader("📊 Data Visualization")
+
+numeric_columns = df.select_dtypes(include="number").columns
+
+if len(numeric_columns) > 0:
+
+    selected_column = st.selectbox(
+        "Select a Numeric Column",
+        numeric_columns
+    )
+
+    chart = st.selectbox(
+        "Choose Chart",
+        [
+            "Bar Chart",
+            "Histogram",
+            "Box Plot"
+        ]
+    )
+
+    import plotly.express as px
+
+    if chart == "Bar Chart":
+
+        value_counts = (
+            df[selected_column]
+            .value_counts()
+            .sort_index()
+            .reset_index()
+        )
+
+        value_counts.columns = [selected_column, "Count"]
+
+        fig = px.bar(
+            value_counts,
+            x=selected_column,
+            y="Count",
+            title=f"Bar Chart of {selected_column}"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif chart == "Histogram":
+
+        fig = px.histogram(
+            df,
+            x=selected_column,
+            title=f"Histogram of {selected_column}"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif chart == "Box Plot":
+
+        fig = px.box(
+            df,
+            y=selected_column,
+            title=f"Box Plot of {selected_column}"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
