@@ -6,172 +6,171 @@ st.set_page_config(page_title="Data Visualization", page_icon="📊")
 
 st.title("📊 Data Visualization")
 
-st.write("Upload your Excel or CSV file to create charts.")
+st.write("Visualize the dataset uploaded on the Home page.")
 
-uploaded_file = st.file_uploader(
-    "📂 Upload Excel or CSV File",
-    type=["csv", "xlsx"],
-    key="visualization_upload"
-)
+# Check if a dataset has been uploaded on the Home page
+if "df" not in st.session_state:
+    st.warning("⚠ Please upload a dataset on the Home page first.")
+    st.stop()
 
-if uploaded_file is not None:
+# Load dataset from session state
+df = st.session_state["df"]
 
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+st.success("✅ Dataset loaded from Home page!")
 
-    st.success("✅ File uploaded successfully!")
+# Preview dataset
+st.subheader("Dataset Preview")
+st.dataframe(df, use_container_width=True)
 
-    st.subheader("Dataset Preview")
-    st.dataframe(df, use_container_width=True)
+# Find numeric columns
+numeric_columns = df.select_dtypes(include="number").columns.tolist()
 
-    numeric_columns = df.select_dtypes(include="number").columns.tolist()
+if len(numeric_columns) == 0:
+    st.warning("No numeric columns found.")
 
-    if len(numeric_columns) == 0:
-        st.warning("No numeric columns found.")
-    else:
+else:
 
-        selected_column = st.selectbox(
-            "Select Numeric Column",
-            numeric_columns
+    selected_column = st.selectbox(
+        "Select Numeric Column",
+        numeric_columns
+    )
+
+    chart = st.selectbox(
+        "Choose Chart",
+        [
+            "Bar Chart",
+            "Histogram",
+            "Box Plot",
+            "Correlation Heatmap",
+            "Scatter Plot",
+            "Line Chart",
+            "Pie Chart"
+        ]
+    )
+
+    # ==========================
+    # BAR CHART
+    # ==========================
+    if chart == "Bar Chart":
+
+        value_counts = (
+            df[selected_column]
+            .value_counts()
+            .sort_index()
+            .reset_index()
         )
 
-        chart = st.selectbox(
-            "Choose Chart",
-            [
-                "Bar Chart",
-                "Histogram",
-                "Box Plot",
-                "Correlation Heatmap",
-                "Scatter Plot",
-                "Line Chart",
-                "Pie Chart"
-            ]
+        value_counts.columns = [selected_column, "Count"]
+
+        fig = px.bar(
+            value_counts,
+            x=selected_column,
+            y="Count",
+            title=f"Bar Chart - {selected_column}"
         )
-        # =====================================
-        # BAR CHART
-        # =====================================
-        if chart == "Bar Chart":
 
-            value_counts = (
-                df[selected_column]
-                .value_counts()
-                .sort_index()
-                .reset_index()
-            )
+        st.plotly_chart(fig, use_container_width=True)
 
-            value_counts.columns = [selected_column, "Count"]
+    # ==========================
+    # HISTOGRAM
+    # ==========================
+    elif chart == "Histogram":
 
-            fig = px.bar(
-                value_counts,
-                x=selected_column,
-                y="Count",
-                title=f"Bar Chart - {selected_column}"
-            )
+        fig = px.histogram(
+            df,
+            x=selected_column,
+            title=f"Histogram - {selected_column}"
+        )
 
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-        # =====================================
-        # HISTOGRAM
-        # =====================================
-        elif chart == "Histogram":
+    # ==========================
+    # BOX PLOT
+    # ==========================
+    elif chart == "Box Plot":
 
-            fig = px.histogram(
-                df,
-                x=selected_column,
-                title=f"Histogram - {selected_column}"
-            )
+        fig = px.box(
+            df,
+            y=selected_column,
+            title=f"Box Plot - {selected_column}"
+        )
 
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-        # =====================================
-        # BOX PLOT
-        # =====================================
-        elif chart == "Box Plot":
+    # ==========================
+    # CORRELATION HEATMAP
+    # ==========================
+    elif chart == "Correlation Heatmap":
 
-            fig = px.box(
-                df,
-                y=selected_column,
-                title=f"Box Plot - {selected_column}"
-            )
+        correlation = df[numeric_columns].corr()
 
-            st.plotly_chart(fig, use_container_width=True)
+        fig = px.imshow(
+            correlation,
+            text_auto=True,
+            aspect="auto",
+            color_continuous_scale="RdBu_r",
+            title="Correlation Heatmap"
+        )
 
-        # =====================================
-        # CORRELATION HEATMAP
-        # =====================================
-        elif chart == "Correlation Heatmap":
+        st.plotly_chart(fig, use_container_width=True)
 
-            correlation = df[numeric_columns].corr()
+    # ==========================
+    # SCATTER PLOT
+    # ==========================
+    elif chart == "Scatter Plot":
 
-            fig = px.imshow(
-                correlation,
-                text_auto=True,
-                aspect="auto",
-                color_continuous_scale="RdBu_r",
-                title="Correlation Heatmap"
-            )
+        x_axis = st.selectbox(
+            "Select X-axis",
+            numeric_columns,
+            key="scatter_x"
+        )
 
-            st.plotly_chart(fig, use_container_width=True)
+        y_axis = st.selectbox(
+            "Select Y-axis",
+            numeric_columns,
+            key="scatter_y"
+        )
 
-        # =====================================
-        # SCATTER PLOT
-        # =====================================
-        elif chart == "Scatter Plot":
+        fig = px.scatter(
+            df,
+            x=x_axis,
+            y=y_axis,
+            title=f"Scatter Plot: {x_axis} vs {y_axis}"
+        )
 
-            x_axis = st.selectbox(
-                "Select X-axis",
-                numeric_columns,
-                key="scatter_x"
-            )
+        st.plotly_chart(fig, use_container_width=True)
 
-            y_axis = st.selectbox(
-                "Select Y-axis",
-                numeric_columns,
-                key="scatter_y"
-            )
+    # ==========================
+    # LINE CHART
+    # ==========================
+    elif chart == "Line Chart":
 
-            fig = px.scatter(
-                df,
-                x=x_axis,
-                y=y_axis,
-                title=f"Scatter Plot: {x_axis} vs {y_axis}"
-            )
+        fig = px.line(
+            df,
+            y=selected_column,
+            title=f"Line Chart - {selected_column}"
+        )
 
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-        # =====================================
-        # LINE CHART
-        # =====================================
-        elif chart == "Line Chart":
+    # ==========================
+    # PIE CHART
+    # ==========================
+    elif chart == "Pie Chart":
 
-            fig = px.line(
-                df,
-                y=selected_column,
-                title=f"Line Chart - {selected_column}"
-            )
+        pie_data = (
+            df[selected_column]
+            .value_counts()
+            .reset_index()
+        )
 
-            st.plotly_chart(fig, use_container_width=True)
+        pie_data.columns = [selected_column, "Count"]
 
-        # =====================================
-        # PIE CHART
-        # =====================================
-        elif chart == "Pie Chart":
+        fig = px.pie(
+            pie_data,
+            names=selected_column,
+            values="Count",
+            title=f"Pie Chart - {selected_column}"
+        )
 
-            pie_data = (
-                df[selected_column]
-                .value_counts()
-                .reset_index()
-            )
-
-            pie_data.columns = [selected_column, "Count"]
-
-            fig = px.pie(
-                pie_data,
-                names=selected_column,
-                values="Count",
-                title=f"Pie Chart - {selected_column}"
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
