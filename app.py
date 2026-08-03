@@ -39,7 +39,8 @@ if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
-
+    # Save dataset for all pages
+    st.session_state["df"] = df
     st.success("✅ File uploaded successfully!")
 
     # ======================================
