@@ -48,7 +48,6 @@ numeric_columns = df.select_dtypes(
     include="number"
 ).columns.tolist()
 
-# Remove ID-type columns
 questionnaire_columns = [
     col for col in numeric_columns
     if not any(
