@@ -16,28 +16,27 @@ st.set_page_config(
 st.title("📝 Questionnaire Content Validity Review")
 
 st.write(
-    "Record and organize qualitative expert evaluations "
-    "of questionnaire items."
+    "Record qualitative expert comments and document "
+    "the researcher's final decision for each questionnaire item."
 )
 
 st.info(
-    "This module records the original qualitative comments "
-    "provided by experts. It does not generate new questions, "
-    "rewrite questionnaire items, or calculate CVI."
+    "Expert comments are recorded using their original wording. "
+    "The researcher decides whether each item should be retained, "
+    "revised, or removed."
 )
 
 # ==========================================
 # QUESTIONNAIRE UPLOAD
 # ==========================================
-st.subheader("📄 Upload Questionnaire")
+st.subheader("📄 Questionnaire")
 
 uploaded_file = st.file_uploader(
-    "Upload your questionnaire",
+    "Upload your questionnaire (Word or PDF)",
     type=["docx", "pdf"]
 )
 
 if uploaded_file is not None:
-
     st.success(
         f"✅ Questionnaire uploaded: {uploaded_file.name}"
     )
@@ -45,14 +44,13 @@ if uploaded_file is not None:
 # ==========================================
 # EXPERT INFORMATION
 # ==========================================
-st.subheader("👥 Expert Information")
+st.subheader("👤 Expert Information")
 
 col1, col2 = st.columns(2)
 
 with col1:
-
     expert_number = st.selectbox(
-        "Select Expert",
+        "Expert",
         [
             "Expert 1",
             "Expert 2",
@@ -63,7 +61,6 @@ with col1:
     )
 
 with col2:
-
     expert_type = st.selectbox(
         "Expert Type",
         [
@@ -77,124 +74,93 @@ with col2:
 # ==========================================
 st.subheader("📝 Questionnaire Item")
 
-item_number = st.text_input(
-    "Item Number",
+item_code = st.text_input(
+    "Question Code",
     placeholder="Example: A1-1"
 )
 
-item_text = st.text_area(
-    "Questionnaire Item",
-    placeholder="Enter or paste the questionnaire item here."
+item_statement = st.text_area(
+    "Question / Statement",
+    placeholder="Enter or paste the questionnaire statement here.",
+    height=120
 )
 
 # ==========================================
-# EXPERT EVALUATION
+# EXPERT COMMENT
 # ==========================================
-st.subheader("💬 Expert Evaluation")
-
-st.write(
-    "Enter the expert's evaluation using the original wording. "
-    "Experts may use any wording they prefer."
-)
+st.subheader("💬 Expert Reviewer Comment")
 
 expert_comment = st.text_area(
-    "Original Expert Comment",
+    "Enter the expert's original comment",
     placeholder=(
         "Example: Clear and relevant.\n"
         "Example: Consider refining the wording.\n"
-        "Example: Rephrase for clarity.\n"
-        "Example: No change needed."
+        "Example: Rephrase for clarity."
     ),
     height=150
 )
 
 # ==========================================
-# RESEARCHER REVIEW CATEGORY
+# RESEARCHER DECISION
 # ==========================================
-st.subheader("📋 Researcher Review Category")
-
-st.caption(
-    "This category is a standardized research record. "
-    "It does not replace the expert's original comment."
-)
-
-researcher_category = st.selectbox(
-    "Select category",
-    [
-        "Accepted",
-        "Good",
-        "Revise",
-        "Remove",
-        "Pending Researcher Decision"
-    ]
-)
-
-# ==========================================
-# RESEARCHER FINAL DECISION
-# ==========================================
-st.subheader("👤 Researcher Final Decision")
+st.subheader("👨‍🏫 Researcher Decision")
 
 researcher_decision = st.selectbox(
-    "Final decision",
+    "Select the final decision after evaluating the expert comment",
     [
+        "Pending Review",
         "Retain",
         "Revise",
-        "Remove",
-        "Pending"
+        "Remove"
     ]
 )
 
-researcher_comment = st.text_area(
+researcher_note = st.text_area(
     "Researcher Note (Optional)",
-    placeholder=(
-        "Enter your final decision or note about the item."
-    )
+    placeholder="Add a short note if required.",
+    height=100
 )
 
 # ==========================================
-# STORE REVIEWS
+# SESSION STORAGE
 # ==========================================
 if "content_validity_reviews" not in st.session_state:
-
     st.session_state.content_validity_reviews = []
 
+# ==========================================
+# ADD REVIEW
+# ==========================================
+if st.button("➕ Add Review"):
 
-if st.button("➕ Add Expert Evaluation"):
+    if item_code.strip() == "":
+        st.warning("⚠️ Please enter the question code.")
 
-    if item_number.strip() == "":
-        st.warning("⚠️ Please enter the item number.")
-
-    elif item_text.strip() == "":
-        st.warning("⚠️ Please enter the questionnaire item.")
+    elif item_statement.strip() == "":
+        st.warning("⚠️ Please enter the question/statement.")
 
     elif expert_comment.strip() == "":
-        st.warning("⚠️ Please enter the expert's original evaluation.")
+        st.warning("⚠️ Please enter the expert reviewer comment.")
 
     else:
 
         review = {
-            "Item": item_number,
-            "Item Text": item_text,
             "Expert": expert_number,
             "Expert Type": expert_type,
-            "Original Expert Comment": expert_comment,
-            "Review Category": researcher_category,
+            "Question Code": item_code,
+            "Question / Statement": item_statement,
+            "Expert Reviewer Comment": expert_comment,
             "Researcher Decision": researcher_decision,
-            "Researcher Note": researcher_comment
+            "Researcher Note": researcher_note
         }
 
-        st.session_state.content_validity_reviews.append(
-            review
-        )
+        st.session_state.content_validity_reviews.append(review)
 
-        st.success(
-            "✅ Expert evaluation recorded successfully."
-        )
+        st.success("✅ Review added successfully.")
 
 # ==========================================
-# REVIEW RECORDS
+# REVIEW TABLE
 # ==========================================
-st.subheader("📊 Expert Review Records")
+st.subheader("📊 Content Validity Review Records")
 
 if len(st.session_state.content_validity_reviews) > 0:
 
@@ -204,17 +170,18 @@ if len(st.session_state.content_validity_reviews) > 0:
 
     st.dataframe(
         review_df,
-        use_container_width=True
+        use_container_width=True,
+        hide_index=True
     )
 
 else:
 
     st.info(
-        "No expert evaluations have been recorded yet."
+        "No questionnaire items have been reviewed yet."
     )
 
 # ==========================================
-# REVIEW SUMMARY
+# SUMMARY
 # ==========================================
 if len(st.session_state.content_validity_reviews) > 0:
 
@@ -224,55 +191,40 @@ if len(st.session_state.content_validity_reviews) > 0:
         st.session_state.content_validity_reviews
     )
 
-    total_reviews = len(review_df)
+    total_items = len(review_df)
 
-    accepted_count = int(
-        (review_df["Review Category"] == "Accepted").sum()
-    )
-
-    good_count = int(
-        (review_df["Review Category"] == "Good").sum()
+    retain_count = int(
+        (review_df["Researcher Decision"] == "Retain").sum()
     )
 
     revise_count = int(
-        (review_df["Review Category"] == "Revise").sum()
+        (review_df["Researcher Decision"] == "Revise").sum()
     )
 
     remove_count = int(
-        (review_df["Review Category"] == "Remove").sum()
+        (review_df["Researcher Decision"] == "Remove").sum()
+    )
+
+    pending_count = int(
+        (review_df["Researcher Decision"] == "Pending Review").sum()
     )
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
-        st.metric(
-            "Total Reviews",
-            total_reviews
-        )
+        st.metric("Total Reviews", total_items)
 
     with col2:
-        st.metric(
-            "Accepted",
-            accepted_count
-        )
+        st.metric("Retain", retain_count)
 
     with col3:
-        st.metric(
-            "Good",
-            good_count
-        )
+        st.metric("Revise", revise_count)
 
     with col4:
-        st.metric(
-            "Revise",
-            revise_count
-        )
+        st.metric("Remove", remove_count)
 
     with col5:
-        st.metric(
-            "Remove",
-            remove_count
-        )
+        st.metric("Pending", pending_count)
 
 # ==========================================
 # METHODOLOGICAL NOTE
@@ -280,8 +232,7 @@ if len(st.session_state.content_validity_reviews) > 0:
 st.subheader("📌 Methodological Note")
 
 st.write(
-    "The original wording of expert comments is retained. "
-    "The standardized review category is used only to organize "
-    "the qualitative evaluation. The final decision remains "
-    "with the researcher."
+    "The expert's original qualitative comment is preserved. "
+    "The Researcher Decision represents the researcher's judgment "
+    "after considering the expert's evaluation."
 )
