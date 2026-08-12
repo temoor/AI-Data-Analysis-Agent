@@ -3,7 +3,6 @@ import pandas as pd
 import re
 from io import BytesIO
 
-# PDF and Word readers
 from pypdf import PdfReader
 from docx import Document
 
@@ -24,30 +23,32 @@ st.set_page_config(
 st.title("📝 Questionnaire Content Validity Review")
 
 st.write(
-    "Upload a questionnaire and record qualitative expert "
-    "evaluations for each questionnaire item."
+    "Upload a questionnaire and organize qualitative "
+    "expert evaluations for each questionnaire item."
 )
 
 st.info(
-    "This module supports qualitative content validity review. "
-    "It does not calculate CVI, generate new questions, or "
-    "automatically decide whether an item should be retained."
+    "This module records expert comments and the researcher's "
+    "final decision. It does not calculate CVI, generate new "
+    "questions, or rewrite questionnaire items."
 )
 
 
 # ==========================================
-# FUNCTIONS
+# PDF TEXT EXTRACTION
 # ==========================================
-
 def extract_pdf_text(uploaded_file):
-    """Extract text from a PDF file."""
+
+    uploaded_file.seek(0)
 
     pdf_bytes = uploaded_file.read()
+
     reader = PdfReader(BytesIO(pdf_bytes))
 
     text = ""
 
     for page in reader.pages:
+
         page_text = page.extract_text()
 
         if page_text:
@@ -56,81 +57,142 @@ def extract_pdf_text(uploaded_file):
     return text
 
 
+# ==========================================
+# WORD TEXT EXTRACTION
+# ==========================================
 def extract_docx_text(uploaded_file):
-    """Extract text from a Word document."""
 
-    doc = Document(uploaded_file)
+    uploaded_file.seek(0)
+
+    document = Document(uploaded_file)
 
     text = ""
 
-    for paragraph in doc.paragraphs:
-        if paragraph.text.strip():
-            text += paragraph.text.strip() + "\n"
+    # Normal paragraphs
+    for paragraph in document.paragraphs:
 
-    # Also read tables
-    for table in doc.tables:
+        value = paragraph.text.strip()
+
+        if value:
+            text += value + "\n"
+
+    # Tables
+    for table in document.tables:
+
         for row in table.rows:
-            row_text = []
+
+            cells = []
 
             for cell in row.cells:
-                if cell.text.strip():
-                    row_text.append(cell.text.strip())
 
-            if row_text:
-                text += " | ".join(row_text) + "\n"
+                value = cell.text.strip()
+
+                if value:
+                    cells.append(value)
+
+            if cells:
+                text += " | ".join(cells) + "\n"
 
     return text
 
 
+# ==========================================
+# EXTRACT QUESTIONNAIRE ITEMS
+# ==========================================
 def extract_questionnaire_items(text):
-    """
-    Try to identify questionnaire items from extracted text.
-
-    Examples that can be detected:
-    SD1: Statement
-    SD1 - Statement
-    SD1. Statement
-    Q1: Statement
-    Q1. Statement
-    1. Statement
-    """
 
     lines = text.splitlines()
 
     items = []
 
-    for line in lines:
+    current_code = None
+    current_statement = []
 
-        line = line.strip()
+    # --------------------------------------
+    # Save current item
+    # --------------------------------------
+    def save_current_item():
 
-        if not line:
-            continue
+        nonlocal current_code
+        nonlocal current_statement
 
-        # Pattern for codes such as SD1, SD2, EP1, A1, Q1
-        code_match = re.match(
-            r"^([A-Za-z]{1,10}\s*[-_]?\s*\d{1,3})"
-            r"\s*[\:\.\-\)]?\s*(.+)$",
-            line
-        )
+        if current_code and current_statement:
 
-        if code_match:
-
-            code = code_match.group(1).replace(" ", "")
-            statement = code_match.group(2).strip()
+            statement = " ".join(
+                current_statement
+            ).strip()
 
             if len(statement) > 5:
+
                 items.append(
                     {
-                        "Question Code": code,
+                        "Question Code": current_code,
                         "Question / Statement": statement
                     }
                 )
 
+        current_code = None
+        current_statement = []
+
+    # --------------------------------------
+    # Process each line
+    # --------------------------------------
+    for raw_line in lines:
+
+        line = raw_line.strip()
+
+        if not line:
             continue
 
-        # Pattern for numbered questions such as:
+        # ----------------------------------
+        # Remove table separators
+        # ----------------------------------
+        line = line.replace(" | ", " | ")
+
+        # ----------------------------------
+        # Detect code
+        #
+        # Examples:
+        # SD1
+        # SD1-1
+        # A1
+        # A1-1
+        # EP1
+        # Q1
+        # ----------------------------------
+        match = re.match(
+            r"^([A-Za-z]{1,10}"
+            r"(?:[-_]\d{1,3})?"
+            r"\d{1,3})"
+            r"\s*[\:\.\-\)]?\s*(.*)$",
+            line
+        )
+
+        if match:
+
+            save_current_item()
+
+            current_code = (
+                match.group(1)
+                .replace(" ", "")
+            )
+
+            remaining_text = match.group(2).strip()
+
+            if remaining_text:
+                current_statement.append(
+                    remaining_text
+                )
+
+            continue
+
+        # ----------------------------------
+        # Numbered questions
+        #
+        # Examples:
         # 1. Statement
         # 2) Statement
+        # ----------------------------------
         number_match = re.match(
             r"^(\d{1,3})\s*[\.\)\-:]\s*(.+)$",
             line
@@ -138,18 +200,31 @@ def extract_questionnaire_items(text):
 
         if number_match:
 
-            code = "Q" + number_match.group(1)
-            statement = number_match.group(2).strip()
+            save_current_item()
 
-            if len(statement) > 5:
-                items.append(
-                    {
-                        "Question Code": code,
-                        "Question / Statement": statement
-                    }
-                )
+            current_code = (
+                "Q" + number_match.group(1)
+            )
 
+            current_statement.append(
+                number_match.group(2).strip()
+            )
+
+            continue
+
+        # ----------------------------------
+        # Continue previous statement
+        # ----------------------------------
+        if current_code:
+
+            current_statement.append(line)
+
+    # Save final item
+    save_current_item()
+
+    # --------------------------------------
     # Remove duplicates
+    # --------------------------------------
     unique_items = []
 
     seen = set()
@@ -164,74 +239,87 @@ def extract_questionnaire_items(text):
         if key not in seen:
 
             seen.add(key)
+
             unique_items.append(item)
 
     return unique_items
 
 
 # ==========================================
-# QUESTIONNAIRE UPLOAD
+# UPLOAD QUESTIONNAIRE
 # ==========================================
 st.subheader("📄 Upload Questionnaire")
 
 uploaded_file = st.file_uploader(
     "Upload your questionnaire",
-    type=["pdf", "docx"],
-    help="Upload a PDF or Microsoft Word questionnaire."
+    type=["pdf", "docx"]
 )
 
 
 # ==========================================
-# PROCESS QUESTIONNAIRE
+# PROCESS FILE
 # ==========================================
 if uploaded_file is not None:
 
     st.success(
-        f"✅ Questionnaire uploaded: {uploaded_file.name}"
+        f"✅ Questionnaire uploaded: "
+        f"{uploaded_file.name}"
     )
 
     try:
 
-        # Read PDF
         if uploaded_file.name.lower().endswith(".pdf"):
 
-            extracted_text = extract_pdf_text(uploaded_file)
+            extracted_text = extract_pdf_text(
+                uploaded_file
+            )
 
-        # Read Word
         else:
 
-            extracted_text = extract_docx_text(uploaded_file)
+            extracted_text = extract_docx_text(
+                uploaded_file
+            )
 
-        # Store extracted text
-        st.session_state["questionnaire_text"] = extracted_text
+        st.session_state[
+            "questionnaire_text"
+        ] = extracted_text
 
-        # Extract items
-        extracted_items = extract_questionnaire_items(
-            extracted_text
+        extracted_items = (
+            extract_questionnaire_items(
+                extracted_text
+            )
         )
 
-        st.session_state["questionnaire_items"] = extracted_items
+        st.session_state[
+            "questionnaire_items"
+        ] = extracted_items
 
-    except Exception as e:
+    except Exception as error:
 
         st.error(
-            f"❌ Could not read the questionnaire: {e}"
+            f"❌ Unable to read the file: {error}"
         )
 
 
 # ==========================================
-# SHOW EXTRACTED ITEMS
+# EXTRACTED ITEMS
 # ==========================================
-if "questionnaire_items" in st.session_state:
+items = st.session_state.get(
+    "questionnaire_items",
+    []
+)
 
-    items = st.session_state["questionnaire_items"]
+if uploaded_file is not None:
 
-    st.subheader("📋 Extracted Questionnaire Items")
+    st.subheader(
+        "📋 Extracted Questionnaire Items"
+    )
 
     if len(items) > 0:
 
         st.success(
-            f"✅ {len(items)} questionnaire item(s) detected."
+            f"✅ {len(items)} questionnaire "
+            f"item(s) detected."
         )
 
         items_df = pd.DataFrame(items)
@@ -245,13 +333,14 @@ if "questionnaire_items" in st.session_state:
     else:
 
         st.warning(
-            "⚠️ No questionnaire items were automatically detected."
+            "⚠️ No questionnaire items were "
+            "automatically detected."
         )
 
         st.info(
-            "The document may use a format that the automatic "
-            "item detector does not recognize. You can still "
-            "review items manually below."
+            "If the questionnaire uses an unusual "
+            "format, you can enter the item manually "
+            "below."
         )
 
 
@@ -287,14 +376,9 @@ with col2:
 
 
 # ==========================================
-# SELECT QUESTIONNAIRE ITEM
+# SELECT QUESTION
 # ==========================================
 st.subheader("📝 Questionnaire Item")
-
-items = st.session_state.get(
-    "questionnaire_items",
-    []
-)
 
 if len(items) > 0:
 
@@ -302,30 +386,28 @@ if len(items) > 0:
 
     for item in items:
 
-        label = (
+        item_labels.append(
             item["Question Code"]
             + " — "
             + item["Question / Statement"]
         )
 
-        item_labels.append(label)
-
-    selected_item = st.selectbox(
+    selected_label = st.selectbox(
         "Select Questionnaire Item",
         item_labels
     )
 
     selected_index = item_labels.index(
-        selected_item
+        selected_label
     )
 
-    selected_code = items[selected_index][
-        "Question Code"
-    ]
+    selected_code = items[
+        selected_index
+    ]["Question Code"]
 
-    selected_statement = items[selected_index][
-        "Question / Statement"
-    ]
+    selected_statement = items[
+        selected_index
+    ]["Question / Statement"]
 
     st.text_input(
         "Question Code",
@@ -342,10 +424,6 @@ if len(items) > 0:
 
 else:
 
-    st.warning(
-        "No extracted items available. Enter the item manually."
-    )
-
     selected_code = st.text_input(
         "Question Code",
         placeholder="Example: EP1"
@@ -361,14 +439,16 @@ else:
 # ==========================================
 # EXPERT COMMENT
 # ==========================================
-st.subheader("💬 Expert Reviewer Comment")
+st.subheader(
+    "💬 Expert Reviewer Comment"
+)
 
 expert_comment = st.text_area(
     "Enter the expert's original comment",
     placeholder=(
         "Example: Clear and relevant.\n"
-        "Example: The wording could be improved.\n"
-        "Example: Appropriate for the intended respondents."
+        "Example: Consider refining the wording.\n"
+        "Example: Rephrase for clarity."
     ),
     height=150
 )
@@ -377,11 +457,13 @@ expert_comment = st.text_area(
 # ==========================================
 # RESEARCHER DECISION
 # ==========================================
-st.subheader("👨‍🏫 Researcher Decision")
+st.subheader(
+    "👨‍🏫 Researcher Decision"
+)
 
 st.caption(
-    "The researcher makes the final decision after considering "
-    "the expert's qualitative comment."
+    "The researcher makes the final decision after "
+    "considering the expert's qualitative comment."
 )
 
 researcher_decision = st.selectbox(
@@ -397,7 +479,9 @@ researcher_decision = st.selectbox(
 
 researcher_note = st.text_area(
     "Researcher Note (Optional)",
-    placeholder="Add a short explanation if needed.",
+    placeholder=(
+        "Add a short explanation if required."
+    ),
     height=100
 )
 
@@ -407,7 +491,9 @@ researcher_note = st.text_area(
 # ==========================================
 if "content_validity_reviews" not in st.session_state:
 
-    st.session_state.content_validity_reviews = []
+    st.session_state[
+        "content_validity_reviews"
+    ] = []
 
 
 # ==========================================
@@ -439,18 +525,29 @@ if st.button(
     else:
 
         review = {
+
             "Expert": expert_number,
+
             "Expert Type": expert_type,
+
             "Question Code": selected_code,
-            "Question / Statement": selected_statement,
-            "Expert Reviewer Comment": expert_comment,
-            "Researcher Decision": researcher_decision,
-            "Researcher Note": researcher_note
+
+            "Question / Statement":
+                selected_statement,
+
+            "Expert Reviewer Comment":
+                expert_comment,
+
+            "Researcher Decision":
+                researcher_decision,
+
+            "Researcher Note":
+                researcher_note
         }
 
-        st.session_state.content_validity_reviews.append(
-            review
-        )
+        st.session_state[
+            "content_validity_reviews"
+        ].append(review)
 
         st.success(
             "✅ Expert review added successfully."
@@ -460,14 +557,19 @@ if st.button(
 # ==========================================
 # REVIEW RECORDS
 # ==========================================
-st.subheader("📊 Expert Review Records")
+st.subheader(
+    "📊 Expert Review Records"
+)
 
-if len(
-    st.session_state.content_validity_reviews
-) > 0:
+reviews = st.session_state.get(
+    "content_validity_reviews",
+    []
+)
+
+if len(reviews) > 0:
 
     review_df = pd.DataFrame(
-        st.session_state.content_validity_reviews
+        reviews
     )
 
     st.dataframe(
@@ -486,43 +588,47 @@ else:
 # ==========================================
 # SUMMARY
 # ==========================================
-if len(
-    st.session_state.content_validity_reviews
-) > 0:
+if len(reviews) > 0:
 
-    st.subheader("📈 Review Summary")
+    st.subheader(
+        "📈 Review Summary"
+    )
 
     review_df = pd.DataFrame(
-        st.session_state.content_validity_reviews
+        reviews
     )
 
     total_reviews = len(review_df)
 
     retain_count = int(
         (
-            review_df["Researcher Decision"]
-            == "Retain"
+            review_df[
+                "Researcher Decision"
+            ] == "Retain"
         ).sum()
     )
 
     revise_count = int(
         (
-            review_df["Researcher Decision"]
-            == "Revise"
+            review_df[
+                "Researcher Decision"
+            ] == "Revise"
         ).sum()
     )
 
     remove_count = int(
         (
-            review_df["Researcher Decision"]
-            == "Remove"
+            review_df[
+                "Researcher Decision"
+            ] == "Remove"
         ).sum()
     )
 
     pending_count = int(
         (
-            review_df["Researcher Decision"]
-            == "Pending Review"
+            review_df[
+                "Researcher Decision"
+            ] == "Pending Review"
         ).sum()
     )
 
@@ -562,11 +668,13 @@ if len(
 # ==========================================
 # METHODOLOGICAL NOTE
 # ==========================================
-st.subheader("📌 Methodological Note")
+st.subheader(
+    "📌 Methodological Note"
+)
 
 st.write(
-    "This module is designed to document qualitative expert "
-    "judgment. Expert comments are preserved in their original "
-    "form, while the researcher records the final decision "
-    "for each questionnaire item."
+    "The expert's original qualitative comment is "
+    "preserved. The Researcher Decision represents "
+    "the researcher's judgment after considering "
+    "the expert's evaluation."
 )
