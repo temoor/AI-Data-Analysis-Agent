@@ -54,7 +54,7 @@ if not numeric_columns:
     st.stop()
 
 # ============================================================
-# INFORMATION
+# DATASET INFORMATION
 # ============================================================
 
 st.subheader("📋 Dataset Information")
@@ -80,7 +80,7 @@ with col3:
     )
 
 # ============================================================
-# MODEL PURPOSE
+# MODEL STRUCTURE
 # ============================================================
 
 st.divider()
@@ -107,6 +107,80 @@ st.markdown(
 )
 
 # ============================================================
+# INITIALIZE SESSION STATE
+# ============================================================
+
+if "hoc_name_input" not in st.session_state:
+
+    if "pls_higher_order_model" in st.session_state:
+
+        st.session_state["hoc_name_input"] = (
+            st.session_state[
+                "pls_higher_order_model"
+            ].get(
+                "name",
+                "Higher-Order Construct"
+            )
+        )
+
+    else:
+
+        st.session_state[
+            "hoc_name_input"
+        ] = "Higher-Order Construct"
+
+
+if "hoc_type_input" not in st.session_state:
+
+    if "pls_higher_order_model" in st.session_state:
+
+        saved_type = (
+            st.session_state[
+                "pls_higher_order_model"
+            ].get(
+                "type",
+                "Reflective"
+            )
+        )
+
+        st.session_state[
+            "hoc_type_input"
+        ] = saved_type
+
+    else:
+
+        st.session_state[
+            "hoc_type_input"
+        ] = "Reflective"
+
+
+if "hoc_number_dimensions" not in st.session_state:
+
+    if "pls_higher_order_model" in st.session_state:
+
+        saved_dimensions = (
+            st.session_state[
+                "pls_higher_order_model"
+            ].get(
+                "dimensions",
+                {}
+            )
+        )
+
+        st.session_state[
+            "hoc_number_dimensions"
+        ] = max(
+            1,
+            len(saved_dimensions)
+        )
+
+    else:
+
+        st.session_state[
+            "hoc_number_dimensions"
+        ] = 3
+
+# ============================================================
 # HIGHER-ORDER CONSTRUCT SETUP
 # ============================================================
 
@@ -116,7 +190,7 @@ st.subheader("🏗️ Higher-Order Construct")
 
 hoc_name = st.text_input(
     "Higher-Order Construct Name",
-    value="Higher-Order Construct",
+    key="hoc_name_input",
     help=(
         "Enter the name of the main construct that "
         "contains multiple dimensions."
@@ -129,6 +203,7 @@ hoc_type = st.selectbox(
         "Reflective",
         "Formative"
     ],
+    key="hoc_type_input",
     help=(
         "Select the theoretical measurement type of "
         "the higher-order construct."
@@ -139,9 +214,26 @@ number_of_dimensions = st.number_input(
     "Number of Dimensions",
     min_value=1,
     max_value=30,
-    value=3,
-    step=1
+    step=1,
+    key="hoc_number_dimensions"
 )
+
+# ============================================================
+# LOAD SAVED DIMENSION INFORMATION
+# ============================================================
+
+saved_dimensions = {}
+
+if "pls_higher_order_model" in st.session_state:
+
+    saved_dimensions = (
+        st.session_state[
+            "pls_higher_order_model"
+        ].get(
+            "dimensions",
+            {}
+        )
+    )
 
 # ============================================================
 # DIMENSION SETUP
@@ -152,23 +244,106 @@ st.divider()
 st.subheader("📚 Dimension Setup")
 
 st.write(
-    "Define each dimension and select the questionnaire "
-    "indicators that belong to that dimension."
+    "Enter a meaningful name for every dimension and select "
+    "the questionnaire indicators belonging to that dimension."
 )
 
 dimensions = {}
 
-for i in range(int(number_of_dimensions)):
+for i in range(
+    int(number_of_dimensions)
+):
 
     st.markdown(
         f"### Dimension {i + 1}"
     )
 
+    # --------------------------------------------------------
+    # Default values
+    # --------------------------------------------------------
+
+    if i < len(saved_dimensions):
+
+        saved_dimension_names = list(
+            saved_dimensions.keys()
+        )
+
+        saved_dimension_name = (
+            saved_dimension_names[i]
+        )
+
+        saved_dimension_information = (
+            saved_dimensions[
+                saved_dimension_name
+            ]
+        )
+
+        default_dimension_name = (
+            saved_dimension_name
+        )
+
+        default_dimension_type = (
+            saved_dimension_information.get(
+                "type",
+                "Reflective"
+            )
+        )
+
+        default_dimension_items = (
+            saved_dimension_information.get(
+                "items",
+                []
+            )
+        )
+
+    else:
+
+        default_dimension_name = (
+            f"Dimension {i + 1}"
+        )
+
+        default_dimension_type = (
+            "Reflective"
+        )
+
+        default_dimension_items = []
+
+    # --------------------------------------------------------
+    # Persistent dimension name
+    # --------------------------------------------------------
+
+    dimension_name_key = (
+        f"hoc_dimension_name_{i}"
+    )
+
+    if dimension_name_key not in st.session_state:
+
+        st.session_state[
+            dimension_name_key
+        ] = default_dimension_name
+
     dimension_name = st.text_input(
         "Dimension Name",
-        value=f"Dimension {i + 1}",
-        key=f"hoc_dimension_name_{i}"
+        key=dimension_name_key,
+        help=(
+            "Enter the actual theoretical name of "
+            "this dimension."
+        )
+    ).strip()
+
+    # --------------------------------------------------------
+    # Persistent measurement type
+    # --------------------------------------------------------
+
+    dimension_type_key = (
+        f"hoc_dimension_type_{i}"
     )
+
+    if dimension_type_key not in st.session_state:
+
+        st.session_state[
+            dimension_type_key
+        ] = default_dimension_type
 
     dimension_type = st.selectbox(
         "Dimension Measurement Type",
@@ -176,19 +351,47 @@ for i in range(int(number_of_dimensions)):
             "Reflective",
             "Formative"
         ],
-        key=f"hoc_dimension_type_{i}"
+        key=dimension_type_key
     )
+
+    # --------------------------------------------------------
+    # Persistent indicator selection
+    # --------------------------------------------------------
+
+    dimension_items_key = (
+        f"hoc_dimension_items_{i}"
+    )
+
+    if dimension_items_key not in st.session_state:
+
+        valid_saved_items = [
+            item
+            for item in default_dimension_items
+            if item in numeric_columns
+        ]
+
+        st.session_state[
+            dimension_items_key
+        ] = valid_saved_items
 
     selected_items = st.multiselect(
         "Select Questionnaire Indicators",
         numeric_columns,
-        key=f"hoc_dimension_items_{i}"
+        key=dimension_items_key
     )
 
-    dimensions[dimension_name] = {
-        "items": selected_items,
-        "type": dimension_type
-    }
+    # --------------------------------------------------------
+    # Store current dimension
+    # --------------------------------------------------------
+
+    if dimension_name:
+
+        dimensions[
+            dimension_name
+        ] = {
+            "items": selected_items,
+            "type": dimension_type
+        }
 
 # ============================================================
 # SAVE HIGHER-ORDER MODEL
@@ -203,14 +406,23 @@ if st.button(
 
     valid_dimensions = {}
 
-    for dimension_name, information in dimensions.items():
+    for dimension_name, information in (
+        dimensions.items()
+    ):
 
-        if information["items"]:
+        clean_name = dimension_name.strip()
 
-            valid_dimensions[dimension_name] = information
+        if clean_name and information["items"]:
+
+            valid_dimensions[
+                clean_name
+            ] = {
+                "items": information["items"],
+                "type": information["type"]
+            }
 
     # --------------------------------------------------------
-    # VALIDATION
+    # VALIDATION: HOC NAME
     # --------------------------------------------------------
 
     if not hoc_name.strip():
@@ -219,6 +431,10 @@ if st.button(
             "❌ Please enter a Higher-Order Construct name."
         )
 
+    # --------------------------------------------------------
+    # VALIDATION: DIMENSIONS
+    # --------------------------------------------------------
+
     elif not valid_dimensions:
 
         st.error(
@@ -226,7 +442,27 @@ if st.button(
             "with questionnaire indicators."
         )
 
+    # --------------------------------------------------------
+    # VALIDATION: DUPLICATE DIMENSION NAMES
+    # --------------------------------------------------------
+
+    elif len(valid_dimensions) != len(
+        [
+            name
+            for name in dimensions.keys()
+            if name.strip()
+        ]
+    ):
+
+        st.error(
+            "❌ Each dimension must have a unique name."
+        )
+
     else:
+
+        # ----------------------------------------------------
+        # CHECK DUPLICATE INDICATORS
+        # ----------------------------------------------------
 
         duplicate_items = []
 
@@ -250,7 +486,9 @@ if st.button(
 
                 else:
 
-                    used_items[item] = dimension_name
+                    used_items[item] = (
+                        dimension_name
+                    )
 
         if duplicate_items:
 
@@ -259,9 +497,11 @@ if st.button(
                 "has been assigned to more than one dimension."
             )
 
-            for item, first_dimension, second_dimension in (
-                duplicate_items
-            ):
+            for (
+                item,
+                first_dimension,
+                second_dimension
+            ) in duplicate_items:
 
                 st.write(
                     f"• **{item}** is assigned to "
@@ -271,21 +511,41 @@ if st.button(
 
         else:
 
+            # ------------------------------------------------
+            # SAVE MODEL
+            # ------------------------------------------------
+
             higher_order_model = {
 
-                "name": hoc_name.strip(),
+                "name":
+                    hoc_name.strip(),
 
-                "type": hoc_type,
+                "type":
+                    hoc_type,
 
-                "dimensions": valid_dimensions
+                "dimensions":
+                    valid_dimensions
             }
 
             st.session_state[
                 "pls_higher_order_model"
             ] = higher_order_model
 
+            # ------------------------------------------------
+            # Synchronize persistent inputs
+            # ------------------------------------------------
+
+            st.session_state[
+                "hoc_name_input"
+            ] = hoc_name.strip()
+
+            st.session_state[
+                "hoc_type_input"
+            ] = hoc_type
+
             st.success(
-                "✅ Higher-Order Construct model saved successfully."
+                "✅ Higher-Order Construct model "
+                "saved successfully."
             )
 
 # ============================================================
@@ -315,9 +575,12 @@ if "pls_higher_order_model" in st.session_state:
 
     model_rows = []
 
-    for dimension_name, information in (
-        saved_model["dimensions"].items()
-    ):
+    for (
+        dimension_name,
+        information
+    ) in saved_model[
+        "dimensions"
+    ].items():
 
         model_rows.append(
             {
@@ -334,7 +597,9 @@ if "pls_higher_order_model" in st.session_state:
                     information["type"],
 
                 "Number of Indicators":
-                    len(information["items"]),
+                    len(
+                        information["items"]
+                    ),
 
                 "Indicators":
                     ", ".join(
@@ -370,16 +635,20 @@ if "pls_higher_order_model" in st.session_state:
     ]
 
     st.markdown(
-        f"**{saved_model['name']}**"
+        f"### **{saved_model['name']}**"
     )
 
     st.markdown(
-        f"Measurement Type: **{saved_model['type']}**"
+        f"Measurement Type: "
+        f"**{saved_model['type']}**"
     )
 
-    for dimension_name, information in (
-        saved_model["dimensions"].items()
-    ):
+    for (
+        dimension_name,
+        information
+    ) in saved_model[
+        "dimensions"
+    ].items():
 
         st.markdown(
             f"**↳ {dimension_name}** "
@@ -410,11 +679,18 @@ if "pls_higher_order_model" in st.session_state:
 
     indicator_rows = []
 
-    for dimension_name, information in (
-        saved_model["dimensions"].items()
-    ):
+    for (
+        dimension_name,
+        information
+    ) in saved_model[
+        "dimensions"
+    ].items():
 
         for item in information["items"]:
+
+            if item not in df.columns:
+
+                continue
 
             series = pd.to_numeric(
                 df[item],
@@ -497,9 +773,12 @@ if "pls_higher_order_model" in st.session_state:
         f"{len(saved_model['dimensions'])}"
     )
 
-    for dimension_name, information in (
-        saved_model["dimensions"].items()
-    ):
+    for (
+        dimension_name,
+        information
+    ) in saved_model[
+        "dimensions"
+    ].items():
 
         item_count = len(
             information["items"]
@@ -533,7 +812,7 @@ if "pls_higher_order_model" in st.session_state:
             )
 
 # ============================================================
-# IMPORTANT METHODOLOGICAL NOTE
+# METHODOLOGICAL NOTE
 # ============================================================
 
 st.divider()
