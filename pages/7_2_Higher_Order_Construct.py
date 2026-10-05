@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 
 # ============================================================
 # PAGE CONFIG
@@ -14,8 +15,9 @@ st.set_page_config(
 st.title("🏗️ Higher-Order Construct Setup")
 
 st.write(
-    "Define a higher-order construct, its dimensions, and the "
-    "questionnaire indicators belonging to each dimension."
+    "Set up a higher-order construct using existing construct/dimension "
+    "information where available. Manual configuration is provided only "
+    "when the required theoretical structure is not already available."
 )
 
 # ============================================================
@@ -25,8 +27,7 @@ st.write(
 if "df" not in st.session_state:
 
     st.warning(
-        "⚠️ Please upload your questionnaire dataset "
-        "on the Home page first."
+        "⚠️ Please upload your questionnaire dataset on the Home page first."
     )
 
     st.stop()
@@ -62,22 +63,80 @@ st.subheader("📋 Dataset Information")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric(
-        "Respondents",
-        df.shape[0]
-    )
+    st.metric("Respondents", df.shape[0])
 
 with col2:
-    st.metric(
-        "Variables",
-        df.shape[1]
-    )
+    st.metric("Variables", df.shape[1])
 
 with col3:
-    st.metric(
-        "Numeric Items",
-        len(numeric_columns)
+    st.metric("Numeric Items", len(numeric_columns))
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def normalize_name(value):
+    """Normalize a name for comparison."""
+    if value is None:
+        return ""
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        str(value).lower()
     )
+
+
+def find_existing_dimension_model():
+    """
+    Look for existing dimension/construct information already
+    stored in the application session.
+    """
+
+    # --------------------------------------------------------
+    # 1. Existing Higher-Order Model
+    # --------------------------------------------------------
+
+    if "pls_higher_order_model" in st.session_state:
+
+        model = st.session_state["pls_higher_order_model"]
+
+        if isinstance(model, dict):
+            if model.get("dimensions"):
+                return model
+
+    # --------------------------------------------------------
+    # 2. Existing Simple PLS Constructs
+    # --------------------------------------------------------
+
+    if "pls_constructs" in st.session_state:
+
+        constructs = st.session_state["pls_constructs"]
+
+        if isinstance(constructs, dict) and constructs:
+
+            return {
+                "name": "",
+                "type": "Reflective",
+                "dimensions": {
+                    name: {
+                        "items": info.get("items", []),
+                        "type": info.get("type", "Reflective")
+                    }
+                    for name, info in constructs.items()
+                    if isinstance(info, dict)
+                    and info.get("items")
+                }
+            }
+
+    return None
+
+
+# ============================================================
+# DETECT EXISTING MODEL
+# ============================================================
+
+existing_model = find_existing_dimension_model()
 
 # ============================================================
 # MODEL STRUCTURE
@@ -87,390 +146,331 @@ st.divider()
 
 st.subheader("🔍 Model Structure")
 
-st.info(
-    "This page is used when a researcher has a hierarchical "
-    "measurement structure in which a higher-order construct "
-    "is represented by multiple dimensions, and each dimension "
-    "is measured by questionnaire indicators."
-)
+if existing_model and existing_model.get("dimensions"):
 
-st.markdown(
-    """
-**Example**
+    st.success(
+        "✅ Existing construct/dimension information was found "
+        "in the current PLS-SEM session."
+    )
 
-**Environmental Factors**  
-↓  
-**Environmental Regulation** → EP1, EP2, EP3, EP4, EP5  
-**Carbon Footprint** → EP6, EP7, EP8, EP9, EP10  
-**Waste Management** → EP11, EP12, EP13, EP14, EP15
-"""
-)
+    st.info(
+        "The system will use the existing dimensions and indicators "
+        "instead of asking you to enter them again."
+    )
+
+else:
+
+    st.warning(
+        "⚠️ No existing dimension structure was found in the current session."
+    )
+
+    st.write(
+        "If your research theory already defines dimensions, you can "
+        "configure them below. The software will not invent theoretical "
+        "dimension names from indicator codes."
+    )
 
 # ============================================================
-# INITIALIZE SESSION STATE
+# EXISTING STRUCTURE
 # ============================================================
 
-if "hoc_name_input" not in st.session_state:
+if existing_model and existing_model.get("dimensions"):
 
-    if "pls_higher_order_model" in st.session_state:
+    st.divider()
 
-        st.session_state["hoc_name_input"] = (
-            st.session_state[
-                "pls_higher_order_model"
-            ].get(
-                "name",
-                "Higher-Order Construct"
-            )
+    st.subheader("📚 Existing Dimensions Detected")
+
+    detected_rows = []
+
+    for dimension_name, information in (
+        existing_model["dimensions"].items()
+    ):
+
+        detected_rows.append(
+            {
+                "Dimension": dimension_name,
+                "Measurement Type": information.get(
+                    "type",
+                    "Reflective"
+                ),
+                "Indicators": ", ".join(
+                    information.get("items", [])
+                ),
+                "Number of Indicators": len(
+                    information.get("items", [])
+                )
+            }
+        )
+
+    detected_df = pd.DataFrame(detected_rows)
+
+    st.dataframe(
+        detected_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # HOC NAME
+    # --------------------------------------------------------
+
+    st.subheader("🏗️ Higher-Order Construct")
+
+    saved_hoc_name = existing_model.get("name", "")
+
+    if not saved_hoc_name:
+
+        saved_hoc_name = st.text_input(
+            "Higher-Order Construct Name",
+            value="Environmental Factors",
+            key="hoc_new_name"
         )
 
     else:
 
-        st.session_state[
-            "hoc_name_input"
-        ] = "Higher-Order Construct"
-
-
-if "hoc_type_input" not in st.session_state:
-
-    if "pls_higher_order_model" in st.session_state:
-
-        saved_type = (
-            st.session_state[
-                "pls_higher_order_model"
-            ].get(
-                "type",
-                "Reflective"
-            )
+        st.text_input(
+            "Higher-Order Construct Name",
+            value=saved_hoc_name,
+            disabled=True,
+            key="hoc_detected_name"
         )
-
-        st.session_state[
-            "hoc_type_input"
-        ] = saved_type
-
-    else:
-
-        st.session_state[
-            "hoc_type_input"
-        ] = "Reflective"
-
-
-if "hoc_number_dimensions" not in st.session_state:
-
-    if "pls_higher_order_model" in st.session_state:
-
-        saved_dimensions = (
-            st.session_state[
-                "pls_higher_order_model"
-            ].get(
-                "dimensions",
-                {}
-            )
-        )
-
-        st.session_state[
-            "hoc_number_dimensions"
-        ] = max(
-            1,
-            len(saved_dimensions)
-        )
-
-    else:
-
-        st.session_state[
-            "hoc_number_dimensions"
-        ] = 3
-
-# ============================================================
-# HIGHER-ORDER CONSTRUCT SETUP
-# ============================================================
-
-st.divider()
-
-st.subheader("🏗️ Higher-Order Construct")
-
-hoc_name = st.text_input(
-    "Higher-Order Construct Name",
-    key="hoc_name_input",
-    help=(
-        "Enter the name of the main construct that "
-        "contains multiple dimensions."
-    )
-)
-
-hoc_type = st.selectbox(
-    "Higher-Order Construct Measurement Type",
-    [
-        "Reflective",
-        "Formative"
-    ],
-    key="hoc_type_input",
-    help=(
-        "Select the theoretical measurement type of "
-        "the higher-order construct."
-    )
-)
-
-number_of_dimensions = st.number_input(
-    "Number of Dimensions",
-    min_value=1,
-    max_value=30,
-    step=1,
-    key="hoc_number_dimensions"
-)
-
-# ============================================================
-# LOAD SAVED DIMENSION INFORMATION
-# ============================================================
-
-saved_dimensions = {}
-
-if "pls_higher_order_model" in st.session_state:
-
-    saved_dimensions = (
-        st.session_state[
-            "pls_higher_order_model"
-        ].get(
-            "dimensions",
-            {}
-        )
-    )
-
-# ============================================================
-# DIMENSION SETUP
-# ============================================================
-
-st.divider()
-
-st.subheader("📚 Dimension Setup")
-
-st.write(
-    "Enter a meaningful name for every dimension and select "
-    "the questionnaire indicators belonging to that dimension."
-)
-
-dimensions = {}
-
-for i in range(
-    int(number_of_dimensions)
-):
-
-    st.markdown(
-        f"### Dimension {i + 1}"
-    )
 
     # --------------------------------------------------------
-    # Default values
+    # HOC TYPE
     # --------------------------------------------------------
 
-    if i < len(saved_dimensions):
-
-        saved_dimension_names = list(
-            saved_dimensions.keys()
-        )
-
-        saved_dimension_name = (
-            saved_dimension_names[i]
-        )
-
-        saved_dimension_information = (
-            saved_dimensions[
-                saved_dimension_name
-            ]
-        )
-
-        default_dimension_name = (
-            saved_dimension_name
-        )
-
-        default_dimension_type = (
-            saved_dimension_information.get(
-                "type",
-                "Reflective"
-            )
-        )
-
-        default_dimension_items = (
-            saved_dimension_information.get(
-                "items",
-                []
-            )
-        )
-
-    else:
-
-        default_dimension_name = (
-            f"Dimension {i + 1}"
-        )
-
-        default_dimension_type = (
-            "Reflective"
-        )
-
-        default_dimension_items = []
-
-    # --------------------------------------------------------
-    # Persistent dimension name
-    # --------------------------------------------------------
-
-    dimension_name_key = (
-        f"hoc_dimension_name_{i}"
+    existing_hoc_type = existing_model.get(
+        "type",
+        "Reflective"
     )
 
-    if dimension_name_key not in st.session_state:
-
-        st.session_state[
-            dimension_name_key
-        ] = default_dimension_name
-
-    dimension_name = st.text_input(
-        "Dimension Name",
-        key=dimension_name_key,
-        help=(
-            "Enter the actual theoretical name of "
-            "this dimension."
-        )
-    ).strip()
-
-    # --------------------------------------------------------
-    # Persistent measurement type
-    # --------------------------------------------------------
-
-    dimension_type_key = (
-        f"hoc_dimension_type_{i}"
-    )
-
-    if dimension_type_key not in st.session_state:
-
-        st.session_state[
-            dimension_type_key
-        ] = default_dimension_type
-
-    dimension_type = st.selectbox(
-        "Dimension Measurement Type",
+    hoc_type = st.selectbox(
+        "Higher-Order Construct Measurement Type",
         [
             "Reflective",
             "Formative"
         ],
-        key=dimension_type_key
+        index=(
+            0
+            if existing_hoc_type == "Reflective"
+            else 1
+        ),
+        key="hoc_detected_type"
     )
 
     # --------------------------------------------------------
-    # Persistent indicator selection
+    # CONFIRM DETECTED MODEL
     # --------------------------------------------------------
 
-    dimension_items_key = (
-        f"hoc_dimension_items_{i}"
+    st.divider()
+
+    st.subheader("✅ Researcher Confirmation")
+
+    st.write(
+        "Please confirm that the detected dimensions and indicators "
+        "represent your theoretical higher-order construct."
     )
 
-    if dimension_items_key not in st.session_state:
-
-        valid_saved_items = [
-            item
-            for item in default_dimension_items
-            if item in numeric_columns
-        ]
-
-        st.session_state[
-            dimension_items_key
-        ] = valid_saved_items
-
-    selected_items = st.multiselect(
-        "Select Questionnaire Indicators",
-        numeric_columns,
-        key=dimension_items_key
+    confirm_model = st.checkbox(
+        "I confirm that these dimensions and indicators are theoretically correct.",
+        key="confirm_detected_hoc"
     )
 
-    # --------------------------------------------------------
-    # Store current dimension
-    # --------------------------------------------------------
+    if st.button(
+        "💾 Save Detected Higher-Order Model",
+        type="primary",
+        disabled=not confirm_model
+    ):
 
-    if dimension_name:
+        final_name = (
+            saved_hoc_name.strip()
+            if saved_hoc_name
+            else "Higher-Order Construct"
+        )
 
-        dimensions[
-            dimension_name
-        ] = {
-            "items": selected_items,
-            "type": dimension_type
+        higher_order_model = {
+            "name": final_name,
+            "type": hoc_type,
+            "dimensions": existing_model["dimensions"]
         }
 
+        st.session_state[
+            "pls_higher_order_model"
+        ] = higher_order_model
+
+        st.success(
+            "✅ Higher-Order Construct model saved successfully."
+        )
+
+        st.rerun()
+
 # ============================================================
-# SAVE HIGHER-ORDER MODEL
+# MANUAL FALLBACK
 # ============================================================
 
-st.divider()
+else:
 
-if st.button(
-    "💾 Save Higher-Order Construct Model",
-    type="primary"
-):
+    st.divider()
 
-    valid_dimensions = {}
+    st.subheader("🛠️ Manual Higher-Order Model Setup")
 
-    for dimension_name, information in (
-        dimensions.items()
-    ):
+    st.info(
+        "Manual setup is required because the current session does not "
+        "contain dimension information."
+    )
 
-        clean_name = dimension_name.strip()
+    # --------------------------------------------------------
+    # HOC NAME
+    # --------------------------------------------------------
 
-        if clean_name and information["items"]:
+    hoc_name = st.text_input(
+        "Higher-Order Construct Name",
+        value="",
+        placeholder="Example: Environmental Factors",
+        key="hoc_manual_name"
+    )
 
-            valid_dimensions[
-                clean_name
+    # --------------------------------------------------------
+    # HOC TYPE
+    # --------------------------------------------------------
+
+    hoc_type = st.selectbox(
+        "Higher-Order Construct Measurement Type",
+        [
+            "Reflective",
+            "Formative"
+        ],
+        key="hoc_manual_type"
+    )
+
+    # --------------------------------------------------------
+    # NUMBER OF DIMENSIONS
+    # --------------------------------------------------------
+
+    number_of_dimensions = st.number_input(
+        "Number of Dimensions",
+        min_value=1,
+        max_value=30,
+        value=3,
+        step=1,
+        key="hoc_manual_number_dimensions"
+    )
+
+    st.divider()
+
+    st.subheader("📚 Dimension Setup")
+
+    st.write(
+        "Enter the dimension names and select the indicators belonging "
+        "to each dimension."
+    )
+
+    dimensions = {}
+
+    for i in range(int(number_of_dimensions)):
+
+        st.markdown(
+            f"### Dimension {i + 1}"
+        )
+
+        dimension_name = st.text_input(
+            "Dimension Name",
+            placeholder=f"Example: Dimension {i + 1}",
+            key=f"hoc_manual_dimension_name_{i}"
+        )
+
+        dimension_type = st.selectbox(
+            "Dimension Measurement Type",
+            [
+                "Reflective",
+                "Formative"
+            ],
+            key=f"hoc_manual_dimension_type_{i}"
+        )
+
+        selected_items = st.multiselect(
+            "Select Questionnaire Indicators",
+            numeric_columns,
+            key=f"hoc_manual_dimension_items_{i}"
+        )
+
+        if dimension_name.strip():
+
+            dimensions[
+                dimension_name.strip()
             ] = {
-                "items": information["items"],
-                "type": information["type"]
+                "items": selected_items,
+                "type": dimension_type
             }
 
-    # --------------------------------------------------------
-    # VALIDATION: HOC NAME
-    # --------------------------------------------------------
+    # ========================================================
+    # SAVE MANUAL MODEL
+    # ========================================================
 
-    if not hoc_name.strip():
+    st.divider()
 
-        st.error(
-            "❌ Please enter a Higher-Order Construct name."
-        )
-
-    # --------------------------------------------------------
-    # VALIDATION: DIMENSIONS
-    # --------------------------------------------------------
-
-    elif not valid_dimensions:
-
-        st.error(
-            "❌ Please define at least one dimension "
-            "with questionnaire indicators."
-        )
-
-    # --------------------------------------------------------
-    # VALIDATION: DUPLICATE DIMENSION NAMES
-    # --------------------------------------------------------
-
-    elif len(valid_dimensions) != len(
-        [
-            name
-            for name in dimensions.keys()
-            if name.strip()
-        ]
+    if st.button(
+        "💾 Save Higher-Order Construct Model",
+        type="primary",
+        key="save_manual_hoc"
     ):
 
-        st.error(
-            "❌ Each dimension must have a unique name."
-        )
-
-    else:
-
         # ----------------------------------------------------
-        # CHECK DUPLICATE INDICATORS
+        # BASIC VALIDATION
         # ----------------------------------------------------
 
-        duplicate_items = []
+        if not hoc_name.strip():
+
+            st.error(
+                "❌ Please enter a Higher-Order Construct name."
+            )
+
+            st.stop()
+
+        if not dimensions:
+
+            st.error(
+                "❌ Please enter at least one dimension name."
+            )
+
+            st.stop()
+
+        # ----------------------------------------------------
+        # EMPTY DIMENSIONS
+        # ----------------------------------------------------
+
+        empty_dimensions = []
+
+        for dimension_name, information in dimensions.items():
+
+            if not information["items"]:
+
+                empty_dimensions.append(
+                    dimension_name
+                )
+
+        if empty_dimensions:
+
+            st.error(
+                "❌ The following dimensions have no indicators:"
+            )
+
+            for dimension in empty_dimensions:
+
+                st.write(
+                    f"• {dimension}"
+                )
+
+            st.stop()
+
+        # ----------------------------------------------------
+        # DUPLICATE INDICATORS
+        # ----------------------------------------------------
 
         used_items = {}
+        duplicate_items = []
 
-        for dimension_name, information in (
-            valid_dimensions.items()
-        ):
+        for dimension_name, information in dimensions.items():
 
             for item in information["items"]:
 
@@ -486,15 +486,13 @@ if st.button(
 
                 else:
 
-                    used_items[item] = (
-                        dimension_name
-                    )
+                    used_items[item] = dimension_name
 
         if duplicate_items:
 
             st.error(
-                "❌ The same questionnaire indicator "
-                "has been assigned to more than one dimension."
+                "❌ The same questionnaire indicator has been "
+                "assigned to more than one dimension."
             )
 
             for (
@@ -504,52 +502,35 @@ if st.button(
             ) in duplicate_items:
 
                 st.write(
-                    f"• **{item}** is assigned to "
-                    f"**{first_dimension}** and "
-                    f"**{second_dimension}**."
+                    f"• **{item}** → "
+                    f"{first_dimension} and "
+                    f"{second_dimension}"
                 )
 
-        else:
+            st.stop()
 
-            # ------------------------------------------------
-            # SAVE MODEL
-            # ------------------------------------------------
+        # ----------------------------------------------------
+        # SAVE
+        # ----------------------------------------------------
 
-            higher_order_model = {
+        higher_order_model = {
+            "name": hoc_name.strip(),
+            "type": hoc_type,
+            "dimensions": dimensions
+        }
 
-                "name":
-                    hoc_name.strip(),
+        st.session_state[
+            "pls_higher_order_model"
+        ] = higher_order_model
 
-                "type":
-                    hoc_type,
+        st.success(
+            "✅ Higher-Order Construct model saved successfully."
+        )
 
-                "dimensions":
-                    valid_dimensions
-            }
-
-            st.session_state[
-                "pls_higher_order_model"
-            ] = higher_order_model
-
-            # ------------------------------------------------
-            # Synchronize persistent inputs
-            # ------------------------------------------------
-
-            st.session_state[
-                "hoc_name_input"
-            ] = hoc_name.strip()
-
-            st.session_state[
-                "hoc_type_input"
-            ] = hoc_type
-
-            st.success(
-                "✅ Higher-Order Construct model "
-                "saved successfully."
-            )
+        st.rerun()
 
 # ============================================================
-# SHOW SAVED MODEL
+# DISPLAY SAVED HIGHER-ORDER MODEL
 # ============================================================
 
 if "pls_higher_order_model" in st.session_state:
@@ -575,12 +556,9 @@ if "pls_higher_order_model" in st.session_state:
 
     model_rows = []
 
-    for (
-        dimension_name,
-        information
-    ) in saved_model[
-        "dimensions"
-    ].items():
+    for dimension_name, information in (
+        saved_model["dimensions"].items()
+    ):
 
         model_rows.append(
             {
@@ -597,9 +575,7 @@ if "pls_higher_order_model" in st.session_state:
                     information["type"],
 
                 "Number of Indicators":
-                    len(
-                        information["items"]
-                    ),
+                    len(information["items"]),
 
                 "Indicators":
                     ", ".join(
@@ -618,11 +594,9 @@ if "pls_higher_order_model" in st.session_state:
         hide_index=True
     )
 
-# ============================================================
-# MODEL STRUCTURE DISPLAY
-# ============================================================
-
-if "pls_higher_order_model" in st.session_state:
+    # ========================================================
+    # MODEL TREE
+    # ========================================================
 
     st.divider()
 
@@ -630,25 +604,17 @@ if "pls_higher_order_model" in st.session_state:
         "🌳 Model Structure"
     )
 
-    saved_model = st.session_state[
-        "pls_higher_order_model"
-    ]
-
     st.markdown(
-        f"### **{saved_model['name']}**"
+        f"### {saved_model['name']}"
     )
 
     st.markdown(
-        f"Measurement Type: "
-        f"**{saved_model['type']}**"
+        f"Measurement Type: **{saved_model['type']}**"
     )
 
-    for (
-        dimension_name,
-        information
-    ) in saved_model[
-        "dimensions"
-    ].items():
+    for dimension_name, information in (
+        saved_model["dimensions"].items()
+    ):
 
         st.markdown(
             f"**↳ {dimension_name}** "
@@ -661,11 +627,9 @@ if "pls_higher_order_model" in st.session_state:
                 f"　↳ {item}"
             )
 
-# ============================================================
-# DIMENSION INDICATOR INFORMATION
-# ============================================================
-
-if "pls_higher_order_model" in st.session_state:
+    # ========================================================
+    # INDICATOR INFORMATION
+    # ========================================================
 
     st.divider()
 
@@ -673,23 +637,15 @@ if "pls_higher_order_model" in st.session_state:
         "📈 Dimension Indicator Information"
     )
 
-    saved_model = st.session_state[
-        "pls_higher_order_model"
-    ]
-
     indicator_rows = []
 
-    for (
-        dimension_name,
-        information
-    ) in saved_model[
-        "dimensions"
-    ].items():
+    for dimension_name, information in (
+        saved_model["dimensions"].items()
+    ):
 
         for item in information["items"]:
 
             if item not in df.columns:
-
                 continue
 
             series = pd.to_numeric(
@@ -747,21 +703,15 @@ if "pls_higher_order_model" in st.session_state:
             hide_index=True
         )
 
-# ============================================================
-# MODEL STATUS
-# ============================================================
-
-if "pls_higher_order_model" in st.session_state:
+    # ========================================================
+    # MODEL STATUS
+    # ========================================================
 
     st.divider()
 
     st.subheader(
         "🔎 Higher-Order Model Status"
     )
-
-    saved_model = st.session_state[
-        "pls_higher_order_model"
-    ]
 
     st.success(
         f"✅ Higher-Order Construct: "
@@ -773,12 +723,9 @@ if "pls_higher_order_model" in st.session_state:
         f"{len(saved_model['dimensions'])}"
     )
 
-    for (
-        dimension_name,
-        information
-    ) in saved_model[
-        "dimensions"
-    ].items():
+    for dimension_name, information in (
+        saved_model["dimensions"].items()
+    ):
 
         item_count = len(
             information["items"]
@@ -822,17 +769,15 @@ st.subheader(
 )
 
 st.info(
-    "This page defines the hierarchical measurement structure "
-    "for a higher-order construct. Selecting Reflective or "
-    "Formative measurement type is a researcher/theory-driven "
-    "decision. The software does not automatically determine "
-    "the correct measurement specification."
+    "A higher-order construct is a theory-driven hierarchical "
+    "measurement structure. The software can reuse an existing "
+    "construct/dimension specification, but it should not invent "
+    "theoretical dimensions merely from indicator names."
 )
 
 st.warning(
-    "⚠️ Saving a higher-order model on this page does not "
-    "automatically establish statistical validity. The "
-    "higher-order measurement model must be evaluated using "
-    "appropriate PLS-SEM procedures before research conclusions "
-    "are made."
+    "⚠️ Saving the higher-order structure does not by itself "
+    "establish reliability, validity, or statistical significance. "
+    "The higher-order measurement model must be evaluated using "
+    "appropriate PLS-SEM procedures."
 )
