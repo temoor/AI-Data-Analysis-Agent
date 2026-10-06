@@ -7,6 +7,7 @@ import io
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+
 # ============================================================
 # PAGE CONFIG
 # ============================================================
@@ -30,8 +31,9 @@ st.info(
     "It should not be described as an exact reproduction of SmartPLS."
 )
 
+
 # ============================================================
-# CHECK REQUIRED DATA
+# CHECK DATASET
 # ============================================================
 
 if "df" not in st.session_state:
@@ -42,40 +44,111 @@ if "df" not in st.session_state:
 
 df = st.session_state["df"].copy()
 
-if "pls_higher_order_model" not in st.session_state:
-    st.warning(
-        "⚠️ No Higher-Order Construct model was found."
+
+# ============================================================
+# MULTIPLE HIGHER-ORDER CONSTRUCT SUPPORT
+# ============================================================
+
+def is_valid_hoc_model(model):
+    return (
+        isinstance(model, dict)
+        and isinstance(model.get("dimensions", {}), dict)
+        and len(model.get("dimensions", {})) > 0
     )
+
+
+def collect_all_hoc_models():
+
+    models = {}
+
+    # New multiple-HOC storage
+    saved_models = st.session_state.get(
+        "pls_higher_order_models"
+    )
+
+    if isinstance(saved_models, dict):
+
+        # Format:
+        # {
+        #   "Variable_1": {...},
+        #   "Variable_2": {...}
+        # }
+        for key, value in saved_models.items():
+
+            if is_valid_hoc_model(value):
+
+                name = value.get(
+                    "name",
+                    str(key)
+                )
+
+                models[name] = value
+
+    elif isinstance(saved_models, list):
+
+        for value in saved_models:
+
+            if is_valid_hoc_model(value):
+
+                name = value.get(
+                    "name",
+                    f"Higher-Order Construct {len(models) + 1}"
+                )
+
+                models[name] = value
+
+
+    # Backward compatibility:
+    # original single-HOC storage
+    single_model = st.session_state.get(
+        "pls_higher_order_model"
+    )
+
+    if is_valid_hoc_model(single_model):
+
+        name = single_model.get(
+            "name",
+            "Higher-Order Construct"
+        )
+
+        models[name] = single_model
+
+
+    return models
+
+
+all_hoc_models = collect_all_hoc_models()
+
+
+if not all_hoc_models:
+
+    st.warning(
+        "⚠️ No Higher-Order Construct models were found."
+    )
+
     st.info(
         "Please complete 2 Higher Order Construct first."
     )
+
     st.stop()
 
-higher_order_model = st.session_state["pls_higher_order_model"]
 
-hoc_name = higher_order_model.get(
-    "name",
-    "Higher-Order Construct"
-)
-
-hoc_type = higher_order_model.get(
-    "type",
-    "Reflective"
-)
-
-dimensions = higher_order_model.get(
-    "dimensions",
-    {}
-)
+# ============================================================
+# STRUCTURAL MODEL
+# ============================================================
 
 if "pls_higher_order_structural_model" not in st.session_state:
+
     st.warning(
         "⚠️ No Higher-Order Structural Model was found."
     )
+
     st.info(
         "Please complete 1 Higher Order Structural Model first."
     )
+
     st.stop()
+
 
 structural_model = st.session_state[
     "pls_higher_order_structural_model"
@@ -87,16 +160,43 @@ paths = structural_model.get(
 )
 
 if not paths:
+
     st.error(
         "❌ No structural paths have been defined."
     )
+
     st.stop()
+
+
+# ============================================================
+# PRIMARY HOC
+# ============================================================
+
+hoc_names = list(all_hoc_models.keys())
+
+primary_hoc_name = hoc_names[0]
+
+primary_hoc_model = all_hoc_models[
+    primary_hoc_name
+]
+
+primary_hoc_type = primary_hoc_model.get(
+    "type",
+    "Reflective"
+)
+
+primary_dimensions = primary_hoc_model.get(
+    "dimensions",
+    {}
+)
+
 
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
 def numeric_series(series):
+
     return pd.to_numeric(
         series,
         errors="coerce"
@@ -104,6 +204,7 @@ def numeric_series(series):
 
 
 def numeric_dataframe(data, columns):
+
     return data[
         columns
     ].apply(
@@ -113,6 +214,7 @@ def numeric_dataframe(data, columns):
 
 
 def standardize_series(series):
+
     series = numeric_series(series)
 
     std = series.std(
@@ -120,6 +222,7 @@ def standardize_series(series):
     )
 
     if pd.isna(std) or std == 0:
+
         return pd.Series(
             0.0,
             index=series.index
@@ -130,13 +233,24 @@ def standardize_series(series):
     ) / std
 
 
+# ============================================================
+# DIMENSION SCORES
+# ============================================================
+
 def create_dimension_scores(
     data,
-    model_dimensions
+    dimensions
 ):
+
     scores = {}
 
-    for dimension_name, information in model_dimensions.items():
+    for dimension_name, information in dimensions.items():
+
+        if not isinstance(
+            information,
+            dict
+        ):
+            continue
 
         items = information.get(
             "items",
@@ -169,10 +283,16 @@ def create_dimension_scores(
     )
 
 
+# ============================================================
+# HOC SCORE
+# ============================================================
+
 def create_hoc_score(
     dimension_scores
 ):
+
     if dimension_scores.empty:
+
         return pd.Series(
             np.nan,
             index=df.index
@@ -195,29 +315,67 @@ def create_hoc_score(
     )
 
 
-def create_construct_scores(
+# ============================================================
+# CREATE ALL CONSTRUCT SCORES
+# ============================================================
+
+def create_all_construct_scores(
     data,
-    higher_order_name,
-    model_dimensions,
-    existing_constructs=None
+    hoc_models,
+    existing_constructs
 ):
+
     scores = {}
 
-    dimension_scores = create_dimension_scores(
-        data,
-        model_dimensions
-    )
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Calculate EVERY Higher-Order Construct
+    # --------------------------------------------------------
 
-    # Higher-Order Construct score
-    if not dimension_scores.empty:
+    for hoc_name, hoc_information in hoc_models.items():
 
-        scores[
-            higher_order_name
-        ] = create_hoc_score(
-            dimension_scores
+        if not isinstance(
+            hoc_information,
+            dict
+        ):
+            continue
+
+        dimensions = hoc_information.get(
+            "dimensions",
+            {}
         )
 
+        dimension_scores = create_dimension_scores(
+            data,
+            dimensions
+        )
+
+        # HOC score
+        if not dimension_scores.empty:
+
+            scores[
+                hoc_name
+            ] = create_hoc_score(
+                dimension_scores
+            )
+
+            # Also keep dimension scores available
+            # if researcher uses a dimension in a path.
+            for dimension_name in dimension_scores.columns:
+
+                if dimension_name not in scores:
+
+                    scores[
+                        dimension_name
+                    ] = dimension_scores[
+                        dimension_name
+                    ]
+
+
+    # --------------------------------------------------------
     # Existing simple constructs
+    # --------------------------------------------------------
+
     if isinstance(
         existing_constructs,
         dict
@@ -256,14 +414,6 @@ def create_construct_scores(
                 axis=1
             )
 
-    # Dimension scores
-    for dimension_name in dimension_scores.columns:
-
-        scores[
-            dimension_name
-        ] = dimension_scores[
-            dimension_name
-        ]
 
     return pd.DataFrame(
         scores,
@@ -271,32 +421,37 @@ def create_construct_scores(
     )
 
 
+# ============================================================
+# REGRESSION
+# ============================================================
+
 def multiple_regression(
     y,
     X
 ):
+
     combined = pd.concat(
         [
-            numeric_series(
-                y
-            ).rename(
-                "target"
-            ),
+            numeric_series(y).rename("target"),
             X.apply(
                 pd.to_numeric,
                 errors="coerce"
             )
         ],
         axis=1
-    ).replace(
+    )
+
+    combined = combined.replace(
         [np.inf, -np.inf],
         np.nan
     ).dropna()
 
-    if (
-        len(combined) < 5
-        or X.shape[1] == 0
-    ):
+    if len(combined) < 5:
+
+        return None
+
+    if X.shape[1] == 0:
+
         return None
 
     target = combined[
@@ -320,17 +475,24 @@ def multiple_regression(
             np.ones(
                 len(predictors_std)
             ),
-            predictors_std.to_numpy()
+            predictors_std.to_numpy(
+                dtype=float
+            )
         ]
     )
 
     try:
+
         coefficients = np.linalg.lstsq(
             matrix,
-            target_std.to_numpy(),
+            target_std.to_numpy(
+                dtype=float
+            ),
             rcond=None
         )[0]
+
     except Exception:
+
         return None
 
     predicted = (
@@ -354,8 +516,11 @@ def multiple_regression(
     )
 
     if ss_tot == 0:
+
         r_squared = np.nan
+
     else:
+
         r_squared = (
             1
             - ss_res / ss_tot
@@ -371,18 +536,19 @@ def multiple_regression(
     }
 
 
+# ============================================================
+# P-VALUE
+# ============================================================
+
 def regression_pvalue(
     y,
     x
 ):
+
     data = pd.concat(
         [
-            numeric_series(
-                y
-            ).rename("y"),
-            numeric_series(
-                x
-            ).rename("x")
+            numeric_series(y).rename("y"),
+            numeric_series(x).rename("x")
         ],
         axis=1
     ).dropna()
@@ -390,6 +556,7 @@ def regression_pvalue(
     n = len(data)
 
     if n < 4:
+
         return np.nan
 
     y_std = standardize_series(
@@ -405,6 +572,7 @@ def regression_pvalue(
     )
 
     if denominator == 0:
+
         return np.nan
 
     beta = np.sum(
@@ -432,6 +600,7 @@ def regression_pvalue(
         se == 0
         or not np.isfinite(se)
     ):
+
         return np.nan
 
     t_value = beta / se
@@ -445,17 +614,23 @@ def regression_pvalue(
     )
 
 
+# ============================================================
+# F-SQUARED
+# ============================================================
+
 def calculate_f2(
     y,
     predictors,
     target_predictor
 ):
+
     full_model = multiple_regression(
         y,
         predictors
     )
 
     if full_model is None:
+
         return np.nan
 
     included_r2 = full_model[
@@ -478,6 +653,7 @@ def calculate_f2(
         )
 
         if reduced_model is None:
+
             return np.nan
 
         excluded_r2 = reduced_model[
@@ -485,6 +661,7 @@ def calculate_f2(
         ]
 
     else:
+
         excluded_r2 = 0.0
 
     denominator = (
@@ -492,6 +669,7 @@ def calculate_f2(
     )
 
     if denominator == 0:
+
         return np.nan
 
     return (
@@ -501,7 +679,7 @@ def calculate_f2(
 
 
 # ============================================================
-# FIXED Q² FUNCTION
+# Q²
 # ============================================================
 
 def calculate_q2_style(
@@ -509,16 +687,6 @@ def calculate_q2_style(
     predictors,
     folds=10
 ):
-    """
-    Cross-validated Q²-style predictive relevance diagnostic.
-
-    This is a research-support implementation.
-    It is NOT an exact SmartPLS blindfolding algorithm.
-
-    IMPORTANT:
-    Q² is calculated independently of bootstrapping.
-    The user does NOT need to click Run Bootstrapping first.
-    """
 
     try:
 
@@ -527,15 +695,15 @@ def calculate_q2_style(
         )
 
         if not predictor_names:
+
             return np.nan
 
         combined = pd.concat(
             [
                 numeric_series(
                     target
-                ).rename(
-                    "target"
-                ),
+                ).rename("target"),
+
                 predictors[
                     predictor_names
                 ].apply(
@@ -552,6 +720,7 @@ def calculate_q2_style(
         ).dropna()
 
         if len(combined) < 20:
+
             return np.nan
 
         n = len(combined)
@@ -564,8 +733,7 @@ def calculate_q2_style(
 
         predicted = np.full(
             n,
-            np.nan,
-            dtype=float
+            np.nan
         )
 
         number_of_folds = min(
@@ -584,6 +752,7 @@ def calculate_q2_style(
         for test_indices in fold_indices:
 
             if len(test_indices) == 0:
+
                 continue
 
             train_mask = np.ones(
@@ -600,6 +769,7 @@ def calculate_q2_style(
             )[0]
 
             if len(train_indices) < 5:
+
                 continue
 
             train = combined.iloc[
@@ -622,7 +792,6 @@ def calculate_q2_style(
                 predictor_names
             ]
 
-            # Training-fold parameters
             y_mean = float(
                 train_y.mean()
             )
@@ -637,6 +806,7 @@ def calculate_q2_style(
                 not np.isfinite(y_std)
                 or y_std <= 0
             ):
+
                 continue
 
             x_mean = train_x.mean()
@@ -678,6 +848,7 @@ def calculate_q2_style(
             )
 
             try:
+
                 coefficients = np.linalg.lstsq(
                     train_matrix,
                     train_y_std.to_numpy(
@@ -687,6 +858,7 @@ def calculate_q2_style(
                 )[0]
 
             except Exception:
+
                 continue
 
             test_matrix = np.column_stack(
@@ -725,6 +897,7 @@ def calculate_q2_style(
         )
 
         if valid.sum() < 5:
+
             return np.nan
 
         actual_valid = actual[
@@ -753,6 +926,7 @@ def calculate_q2_style(
             not np.isfinite(sso)
             or sso <= 0
         ):
+
             return np.nan
 
         q2 = (
@@ -761,17 +935,18 @@ def calculate_q2_style(
         )
 
         if not np.isfinite(q2):
+
             return np.nan
 
         return float(q2)
 
     except Exception:
-        # Never crash the Results page because of Q².
+
         return np.nan
 
 
 # ============================================================
-# BOOTSTRAP FUNCTION
+# BOOTSTRAP
 # ============================================================
 
 def bootstrap_paths(
@@ -834,10 +1009,10 @@ def bootstrap_paths(
             ]
 
             if (
-                outcome
-                not in sample.columns
+                outcome not in sample.columns
                 or not predictors
             ):
+
                 continue
 
             model = multiple_regression(
@@ -846,6 +1021,7 @@ def bootstrap_paths(
             )
 
             if model is None:
+
                 continue
 
             for predictor in predictors:
@@ -885,28 +1061,100 @@ st.divider()
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+
     st.metric(
         "Respondents",
         df.shape[0]
     )
 
 with col2:
+
     st.metric(
-        "Higher-Order Construct",
-        hoc_name
+        "Higher-Order Constructs",
+        len(all_hoc_models)
     )
 
 with col3:
+
     st.metric(
-        "Dimensions",
-        len(dimensions)
+        "Total Dimensions",
+        sum(
+            len(
+                model.get(
+                    "dimensions",
+                    {}
+                )
+            )
+            for model in all_hoc_models.values()
+        )
     )
 
 with col4:
+
     st.metric(
         "Structural Paths",
         len(paths)
     )
+
+
+# ============================================================
+# HOC OVERVIEW
+# ============================================================
+
+st.divider()
+
+st.header(
+    "🏗️ Higher-Order Construct Overview"
+)
+
+hoc_overview_rows = []
+
+for name, model in all_hoc_models.items():
+
+    dims = model.get(
+        "dimensions",
+        {}
+    )
+
+    indicator_count = 0
+
+    for information in dims.values():
+
+        if isinstance(
+            information,
+            dict
+        ):
+
+            indicator_count += len(
+                information.get(
+                    "items",
+                    []
+                )
+            )
+
+    hoc_overview_rows.append(
+        {
+            "Higher-Order Construct":
+                name,
+            "Measurement Type":
+                model.get(
+                    "type",
+                    "Reflective"
+                ),
+            "Dimensions":
+                len(dims),
+            "Indicators":
+                indicator_count
+        }
+    )
+
+st.dataframe(
+    pd.DataFrame(
+        hoc_overview_rows
+    ),
+    use_container_width=True,
+    hide_index=True
+)
 
 
 # ============================================================
@@ -924,12 +1172,15 @@ existing_constructs = st.session_state.get(
     {}
 )
 
-construct_scores = create_construct_scores(
+construct_scores = create_all_construct_scores(
     df,
-    hoc_name,
-    dimensions,
+    all_hoc_models,
     existing_constructs
 )
+
+# ------------------------------------------------------------
+# Required constructs from structural paths
+# ------------------------------------------------------------
 
 required_constructs = set()
 
@@ -943,29 +1194,41 @@ for path in paths:
         path["outcome"]
     )
 
+
 missing_constructs = [
     construct
     for construct in required_constructs
-    if construct
-    not in construct_scores.columns
+    if construct not in construct_scores.columns
 ]
+
 
 if missing_constructs:
 
     st.error(
-        "❌ The following structural constructs "
-        "could not be calculated:"
+        "❌ The following structural constructs could not be calculated:"
     )
 
     for construct in missing_constructs:
+
         st.write(
             f"• {construct}"
         )
 
+    st.info(
+        "The Higher-Order Construct page must save all HOCs "
+        "used in the structural model before results can be calculated."
+    )
+
     st.stop()
+
 
 st.success(
     "✅ Construct scores prepared successfully."
+)
+
+st.write(
+    "The system calculated scores for all Higher-Order Constructs "
+    "and any simple constructs required by the structural model."
 )
 
 st.dataframe(
@@ -1005,11 +1268,13 @@ for path in paths:
         path
     )
 
+
 path_results = []
 
 r_squared_results = {}
 
 f_squared_results = []
+
 
 for outcome, outcome_paths in paths_by_outcome.items():
 
@@ -1021,20 +1286,19 @@ for outcome, outcome_paths in paths_by_outcome.items():
     ]
 
     if (
-        outcome
-        not in construct_scores.columns
+        outcome not in construct_scores.columns
         or not predictors
     ):
+
         continue
 
     model = multiple_regression(
         construct_scores[outcome],
-        construct_scores[
-            predictors
-        ]
+        construct_scores[predictors]
     )
 
     if model is None:
+
         continue
 
     r_squared_results[
@@ -1063,50 +1327,50 @@ for outcome, outcome_paths in paths_by_outcome.items():
 
         if pd.isna(beta):
 
-            direction = (
-                "Not available"
-            )
+            direction = "Not available"
 
         elif abs(beta) >= 0.30:
 
-            direction = (
-                "Moderate/Strong"
-            )
+            direction = "Moderate/Strong"
 
         elif abs(beta) >= 0.10:
 
-            direction = (
-                "Small/Moderate"
-            )
+            direction = "Small/Moderate"
 
         else:
 
-            direction = (
-                "Weak"
-            )
+            direction = "Weak"
 
         path_results.append(
             {
                 "Hypothesis":
                     path["hypothesis"],
+
                 "Predictor":
                     predictor,
+
                 "Outcome":
                     outcome,
+
                 "Path Coefficient (β)":
                     beta,
+
                 "p-value":
                     p_value,
+
                 "N":
                     model["n"],
+
                 "Direction":
                     direction
             }
         )
 
+
 path_results_df = pd.DataFrame(
     path_results
 )
+
 
 if path_results_df.empty:
 
@@ -1115,6 +1379,7 @@ if path_results_df.empty:
     )
 
     st.stop()
+
 
 path_results_display = (
     path_results_df.copy()
@@ -1159,38 +1424,29 @@ for outcome, r2 in r_squared_results.items():
 
     if pd.isna(r2):
 
-        interpretation = (
-            "Not available"
-        )
+        interpretation = "Not available"
 
     elif r2 >= 0.75:
 
-        interpretation = (
-            "Substantial"
-        )
+        interpretation = "Substantial"
 
     elif r2 >= 0.50:
 
-        interpretation = (
-            "Moderate"
-        )
+        interpretation = "Moderate"
 
     elif r2 >= 0.25:
 
-        interpretation = (
-            "Weak to moderate"
-        )
+        interpretation = "Weak to moderate"
 
     else:
 
-        interpretation = (
-            "Weak"
-        )
+        interpretation = "Weak"
 
     r2_rows.append(
         {
             "Endogenous Construct":
                 outcome,
+
             "R²":
                 round(
                     r2,
@@ -1198,10 +1454,12 @@ for outcome, r2 in r_squared_results.items():
                 )
                 if pd.notna(r2)
                 else np.nan,
+
             "Interpretation":
                 interpretation
         }
     )
+
 
 r2_df = pd.DataFrame(
     r2_rows
@@ -1214,8 +1472,8 @@ st.dataframe(
 )
 
 st.caption(
-    "R² represents the proportion of variance in an "
-    "endogenous construct explained by its predictor constructs."
+    "R² represents the proportion of variance in an endogenous "
+    "construct explained by its predictor constructs."
 )
 
 
@@ -1239,10 +1497,10 @@ for outcome, outcome_paths in paths_by_outcome.items():
     ]
 
     if (
-        outcome
-        not in construct_scores.columns
+        outcome not in construct_scores.columns
         or not predictors
     ):
+
         continue
 
     for path in outcome_paths:
@@ -1252,6 +1510,7 @@ for outcome, outcome_paths in paths_by_outcome.items():
         ]
 
         if predictor not in predictors:
+
             continue
 
         f2 = calculate_f2(
@@ -1262,48 +1521,43 @@ for outcome, outcome_paths in paths_by_outcome.items():
 
         if pd.isna(f2):
 
-            interpretation = (
-                "Not available"
-            )
+            interpretation = "Not available"
 
         elif f2 >= 0.35:
 
-            interpretation = (
-                "Large"
-            )
+            interpretation = "Large"
 
         elif f2 >= 0.15:
 
-            interpretation = (
-                "Medium"
-            )
+            interpretation = "Medium"
 
         elif f2 >= 0.02:
 
-            interpretation = (
-                "Small"
-            )
+            interpretation = "Small"
 
         else:
 
-            interpretation = (
-                "Negligible"
-            )
+            interpretation = "Negligible"
 
         f_squared_results.append(
             {
                 "Hypothesis":
                     path["hypothesis"],
+
                 "Predictor":
                     predictor,
+
                 "Outcome":
                     outcome,
+
                 "f²":
                     f2,
+
                 "Effect Size":
                     interpretation
             }
         )
+
 
 f2_df = pd.DataFrame(
     f_squared_results
@@ -1338,7 +1592,7 @@ st.header(
 
 st.write(
     "Bootstrapping estimates the stability and sampling "
-    "uncertainty of the structural path coefficients."
+    "uncertainty of structural path coefficients."
 )
 
 col1, col2 = st.columns(2)
@@ -1365,11 +1619,13 @@ with col2:
         key="hoc_bootstrap_seed"
     )
 
+
 run_bootstrap = st.button(
     "🔄 Run Bootstrapping",
     type="primary",
     key="run_hoc_bootstrap"
 )
+
 
 if run_bootstrap:
 
@@ -1382,12 +1638,8 @@ if run_bootstrap:
         ] = bootstrap_paths(
             construct_scores,
             paths,
-            int(
-                bootstrap_iterations
-            ),
-            int(
-                random_seed
-            )
+            int(bootstrap_iterations),
+            int(random_seed)
         )
 
     st.success(
@@ -1401,6 +1653,7 @@ if run_bootstrap:
 # ============================================================
 
 bootstrap_df = pd.DataFrame()
+
 
 if (
     "higher_order_bootstrap_results"
@@ -1498,32 +1751,42 @@ if (
             {
                 "Hypothesis":
                     row["Hypothesis"],
+
                 "Predictor":
                     predictor,
+
                 "Outcome":
                     outcome,
+
                 "Original β":
                     beta,
+
                 "Bootstrap Mean":
                     bootstrap_mean,
+
                 "Bootstrap SD":
                     bootstrap_sd,
+
                 "t-value":
                     t_value,
+
                 "p-value":
                     p_value,
+
                 "2.5% CI":
                     lower_ci,
+
                 "97.5% CI":
                     upper_ci
             }
         )
 
+
     bootstrap_df = pd.DataFrame(
         bootstrap_rows
     )
 
-    numeric_bootstrap_columns = [
+    numeric_columns = [
         "Original β",
         "Bootstrap Mean",
         "Bootstrap SD",
@@ -1534,9 +1797,9 @@ if (
     ]
 
     bootstrap_df[
-        numeric_bootstrap_columns
+        numeric_columns
     ] = bootstrap_df[
-        numeric_bootstrap_columns
+        numeric_columns
     ].round(
         4
     )
@@ -1549,7 +1812,7 @@ if (
 
 
 # ============================================================
-# Q² — PREDICTIVE RELEVANCE
+# Q²
 # ============================================================
 
 st.divider()
@@ -1559,12 +1822,12 @@ st.header(
 )
 
 st.caption(
-    "Q² is calculated independently of the Bootstrapping button. "
-    "Bootstrapping is used for path-coefficient uncertainty and "
-    "hypothesis testing; it is not required to calculate Q²."
+    "Q² is calculated independently of bootstrapping. "
+    "You do not need to run bootstrapping first."
 )
 
 q2_rows = []
+
 
 for outcome, outcome_paths in paths_by_outcome.items():
 
@@ -1577,9 +1840,9 @@ for outcome, outcome_paths in paths_by_outcome.items():
 
     if (
         not predictors
-        or outcome
-        not in construct_scores.columns
+        or outcome not in construct_scores.columns
     ):
+
         continue
 
     q2 = calculate_q2_style(
@@ -1590,9 +1853,7 @@ for outcome, outcome_paths in paths_by_outcome.items():
 
     if pd.isna(q2):
 
-        interpretation = (
-            "Not available"
-        )
+        interpretation = "Not available"
 
     elif q2 > 0:
 
@@ -1610,12 +1871,15 @@ for outcome, outcome_paths in paths_by_outcome.items():
         {
             "Endogenous Construct":
                 outcome,
+
             "Q²":
                 q2,
+
             "Interpretation":
                 interpretation
         }
     )
+
 
 q2_df = pd.DataFrame(
     q2_rows
@@ -1662,6 +1926,7 @@ st.header(
 
 hypothesis_rows = []
 
+
 for _, row in path_results_df.iterrows():
 
     p_value = row[
@@ -1670,36 +1935,35 @@ for _, row in path_results_df.iterrows():
 
     if pd.isna(p_value):
 
-        decision = (
-            "Not available"
-        )
+        decision = "Not available"
 
     elif p_value < 0.05:
 
-        decision = (
-            "Supported"
-        )
+        decision = "Supported"
 
     else:
 
-        decision = (
-            "Not Supported"
-        )
+        decision = "Not Supported"
 
     hypothesis_rows.append(
         {
             "Hypothesis":
                 row["Hypothesis"],
+
             "Relationship":
                 f"{row['Predictor']} → {row['Outcome']}",
+
             "β":
                 row["Path Coefficient (β)"],
+
             "p-value":
                 p_value,
+
             "Decision":
                 decision
         }
     )
+
 
 hypothesis_df = pd.DataFrame(
     hypothesis_rows
@@ -1715,7 +1979,7 @@ st.dataframe(
 
 
 # ============================================================
-# GRAPHICAL RESULTS
+# GRAPHICAL STRUCTURAL RESULTS
 # ============================================================
 
 st.divider()
@@ -1725,10 +1989,10 @@ st.header(
 )
 
 st.info(
-    "The diagram below is a SmartPLS-inspired results "
-    "visualization. Path coefficients are displayed on "
-    "the structural relationships."
+    "The diagram is a SmartPLS-inspired research visualization. "
+    "It is not claimed to be an exact SmartPLS graphical reproduction."
 )
+
 
 structural_constructs = []
 
@@ -1746,17 +2010,17 @@ for path in paths:
             path["outcome"]
         )
 
+
 node_positions = {}
 
 number_nodes = len(
     structural_constructs
 )
 
+
 if number_nodes == 1:
 
-    x_positions = [
-        0.5
-    ]
+    x_positions = [0.5]
 
 else:
 
@@ -1772,6 +2036,7 @@ else:
         )
     ]
 
+
 for construct, x in zip(
     structural_constructs,
     x_positions
@@ -1784,7 +2049,9 @@ for construct, x in zip(
         0.55
     )
 
+
 result_fig = go.Figure()
+
 
 for _, row in path_results_df.iterrows():
 
@@ -1799,6 +2066,13 @@ for _, row in path_results_df.iterrows():
     beta = row[
         "Path Coefficient (β)"
     ]
+
+    if (
+        predictor not in node_positions
+        or outcome not in node_positions
+    ):
+
+        continue
 
     x1, y1 = node_positions[
         predictor
@@ -1838,18 +2112,26 @@ for _, row in path_results_df.iterrows():
         text=label
     )
 
+
 node_text = []
 
 for construct in structural_constructs:
 
-    if construct == hoc_name:
+    if construct in all_hoc_models:
 
         node_text.append(
             f"<b>{construct}</b><br>"
             "Higher-Order"
         )
 
-    elif construct in dimensions:
+    elif any(
+        construct in model.get(
+            "dimensions",
+            {}
+        )
+        for model in all_hoc_models.values()
+        if isinstance(model, dict)
+    ):
 
         node_text.append(
             f"<b>{construct}</b><br>"
@@ -1872,6 +2154,7 @@ for construct in structural_constructs:
             f"{r2_text}"
         )
 
+
 result_fig.add_trace(
     go.Scatter(
         x=[
@@ -1886,7 +2169,7 @@ result_fig.add_trace(
         marker=dict(
             size=[
                 80
-                if c == hoc_name
+                if c in all_hoc_models
                 else 65
                 for c in structural_constructs
             ],
@@ -1901,6 +2184,7 @@ result_fig.add_trace(
         showlegend=False
     )
 )
+
 
 result_fig.update_layout(
     title={
@@ -1946,6 +2230,7 @@ st.header(
 
 dashboard_col1, dashboard_col2, dashboard_col3, dashboard_col4 = st.columns(4)
 
+
 with dashboard_col1:
 
     supported_count = int(
@@ -1962,12 +2247,14 @@ with dashboard_col1:
         supported_count
     )
 
+
 with dashboard_col2:
 
     st.metric(
         "Structural Paths",
         len(paths)
     )
+
 
 with dashboard_col3:
 
@@ -1982,6 +2269,7 @@ with dashboard_col3:
             3
         )
     )
+
 
 with dashboard_col4:
 
@@ -2005,6 +2293,7 @@ st.write(
     "Export the Higher-Order PLS-SEM results to an Excel workbook."
 )
 
+
 if st.button(
     "📥 Prepare Excel Results",
     key="prepare_hoc_excel"
@@ -2020,27 +2309,23 @@ if st.button(
             workbook.active
         )
 
-        # Summary
+
+        # ----------------------------------------------------
+        # SUMMARY
+        # ----------------------------------------------------
+
         ws_summary = workbook.create_sheet(
             "Summary"
         )
 
         summary_rows = [
             [
-                "Higher-Order Construct",
-                hoc_name
-            ],
-            [
-                "HOC Measurement Type",
-                hoc_type
+                "Higher-Order Constructs",
+                len(all_hoc_models)
             ],
             [
                 "Respondents",
                 df.shape[0]
-            ],
-            [
-                "Dimensions",
-                len(dimensions)
             ],
             [
                 "Structural Paths",
@@ -2054,7 +2339,46 @@ if st.button(
                 row
             )
 
-        # Path Results
+
+        # ----------------------------------------------------
+        # HOC INFORMATION
+        # ----------------------------------------------------
+
+        ws_hoc = workbook.create_sheet(
+            "Higher-Order Constructs"
+        )
+
+        ws_hoc.append(
+            [
+                "Higher-Order Construct",
+                "Measurement Type",
+                "Dimensions"
+            ]
+        )
+
+        for name, model in all_hoc_models.items():
+
+            ws_hoc.append(
+                [
+                    name,
+                    model.get(
+                        "type",
+                        "Reflective"
+                    ),
+                    len(
+                        model.get(
+                            "dimensions",
+                            {}
+                        )
+                    )
+                ]
+            )
+
+
+        # ----------------------------------------------------
+        # PATH RESULTS
+        # ----------------------------------------------------
+
         ws_paths = workbook.create_sheet(
             "Path Results"
         )
@@ -2074,7 +2398,11 @@ if st.button(
                 list(row)
             )
 
+
+        # ----------------------------------------------------
         # R2
+        # ----------------------------------------------------
+
         ws_r2 = workbook.create_sheet(
             "R2"
         )
@@ -2094,7 +2422,11 @@ if st.button(
                 list(row)
             )
 
+
+        # ----------------------------------------------------
         # F2
+        # ----------------------------------------------------
+
         if not f2_df.empty:
 
             ws_f2 = workbook.create_sheet(
@@ -2116,7 +2448,11 @@ if st.button(
                     list(row)
                 )
 
+
+        # ----------------------------------------------------
         # Q2
+        # ----------------------------------------------------
+
         if not q2_df.empty:
 
             ws_q2 = workbook.create_sheet(
@@ -2138,7 +2474,11 @@ if st.button(
                     list(row)
                 )
 
-        # Hypotheses
+
+        # ----------------------------------------------------
+        # HYPOTHESES
+        # ----------------------------------------------------
+
         ws_hyp = workbook.create_sheet(
             "Hypotheses"
         )
@@ -2158,7 +2498,11 @@ if st.button(
                 list(row)
             )
 
-        # Bootstrap
+
+        # ----------------------------------------------------
+        # BOOTSTRAPPING
+        # ----------------------------------------------------
+
         if not bootstrap_df.empty:
 
             ws_boot = workbook.create_sheet(
@@ -2180,7 +2524,11 @@ if st.button(
                     list(row)
                 )
 
-        # HOC Dimensions
+
+        # ----------------------------------------------------
+        # HOC DIMENSIONS
+        # ----------------------------------------------------
+
         ws_dimensions = workbook.create_sheet(
             "HOC Dimensions"
         )
@@ -2194,26 +2542,38 @@ if st.button(
             ]
         )
 
-        for dimension_name, information in dimensions.items():
 
-            ws_dimensions.append(
-                [
-                    hoc_name,
-                    dimension_name,
-                    information.get(
-                        "type",
-                        "Reflective"
-                    ),
-                    ", ".join(
-                        information.get(
-                            "items",
-                            []
-                        )
-                    )
-                ]
+        for hoc_name_export, model in all_hoc_models.items():
+
+            export_dimensions = model.get(
+                "dimensions",
+                {}
             )
 
-        # Formatting
+            for dimension_name, information in export_dimensions.items():
+
+                ws_dimensions.append(
+                    [
+                        hoc_name_export,
+                        dimension_name,
+                        information.get(
+                            "type",
+                            "Reflective"
+                        ),
+                        ", ".join(
+                            information.get(
+                                "items",
+                                []
+                            )
+                        )
+                    ]
+                )
+
+
+        # ----------------------------------------------------
+        # FORMATTING
+        # ----------------------------------------------------
+
         for worksheet in workbook.worksheets:
 
             for cell in worksheet[1]:
@@ -2244,6 +2604,7 @@ if st.button(
                         )
 
                     except Exception:
+
                         pass
 
                 worksheet.column_dimensions[
@@ -2253,6 +2614,7 @@ if st.button(
                     45
                 )
 
+
         workbook.save(
             output
         )
@@ -2260,6 +2622,7 @@ if st.button(
         output.seek(
             0
         )
+
 
         st.download_button(
             label=(
@@ -2280,6 +2643,7 @@ if st.button(
         st.success(
             "✅ Excel results workbook prepared successfully."
         )
+
 
     except Exception as error:
 
