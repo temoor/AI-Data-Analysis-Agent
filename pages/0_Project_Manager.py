@@ -1,813 +1,409 @@
 import streamlit as st
 import pandas as pd
 import pickle
-import io
 import zipfile
+import io
 from datetime import datetime
 
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-
+# ---------------------------------------------------------
+# PAGE CONFIGURATION
+# ---------------------------------------------------------
 st.set_page_config(
     page_title="Project Manager",
-    page_icon="💾",
+    page_icon="📁",
     layout="wide"
 )
 
-st.title("💾 Project Manager")
-
-st.write(
-    "Save your complete research project and restore it later. "
-    "A project package can contain the dataset, model specifications, "
-    "structural paths, researcher decisions, and analysis settings."
-)
-
-st.info(
-    "📌 The project file is intended for research continuity. "
-    "Keep a backup of your project file in a secure location."
-)
+st.title("📁 Project Manager")
+st.write("Save your complete AI Data Analysis project and reopen it later.")
 
 
-# ============================================================
-# PROJECT VERSION
-# ============================================================
+# ---------------------------------------------------------
+# SESSION STATE KEYS TO SAVE
+# ---------------------------------------------------------
+SESSION_KEYS = [
+    "pls_constructs",
+    "pls_structural_paths",
+    "pls_higher_order_model",
+    "pls_higher_order_models",
+    "pls_higher_order_structural_model",
+    "pls_higher_order_structural_paths",
+    "measurement_model_decisions",
+    "higher_order_measurement_decisions",
+    "content_validity_results",
+    "content_validity_decisions",
+    "data_quality_results",
+    "reliability_results",
+    "eda_results",
+    "mediation_results",
+]
 
-PROJECT_VERSION = "1.0"
 
+# ---------------------------------------------------------
+# CREATE PROJECT PACKAGE
+# ---------------------------------------------------------
+def create_project_package(project_name):
+    """Create a downloadable .aida project package."""
 
-# ============================================================
-# HELPER: SAFE SERIALIZATION
-# ============================================================
+    project_data = {}
 
-def collect_project_state():
+    # Save dataframe
+    if "df" in st.session_state:
+        project_data["df"] = st.session_state["df"]
 
-    project = {
-        "project_version": PROJECT_VERSION,
-        "saved_at": datetime.now().isoformat(),
-        "session_state": {}
+    # Save structure information
+    if "pls_structure" in st.session_state:
+        project_data["pls_structure"] = st.session_state["pls_structure"]
+
+    if "excel_structure_detected" in st.session_state:
+        project_data["excel_structure_detected"] = st.session_state[
+            "excel_structure_detected"
+        ]
+
+    # Save analysis/session information
+    for key in SESSION_KEYS:
+        if key in st.session_state:
+            project_data[key] = st.session_state[key]
+
+    metadata = {
+        "project_name": project_name,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "application": "AI Data Analysis Agent",
+        "project_format": "AIDA Project",
     }
 
-    # --------------------------------------------------------
-    # Keys that contain research/model information
-    # --------------------------------------------------------
+    complete_project = {
+        "metadata": metadata,
+        "project_data": project_data,
+    }
 
-    allowed_keys = [
-        "pls_constructs",
-        "pls_structural_paths",
-        "pls_higher_order_model",
-        "pls_higher_order_models",
-        "pls_higher_order_structural_model",
-        "pls_higher_order_structural_paths",
-        "measurement_model_decisions",
-        "higher_order_measurement_decisions",
-        "content_validity_results",
-        "content_validity_decisions",
-        "data_quality_results",
-        "reliability_results",
-        "eda_results",
-        "mediation_results",
-    ]
-
-    for key in allowed_keys:
-
-        if key in st.session_state:
-
-            try:
-
-                project["session_state"][key] = (
-                    st.session_state[key]
-                )
-
-            except Exception:
-
-                pass
-
-    # --------------------------------------------------------
-    # Dataset
-    # --------------------------------------------------------
-
-    if "df" in st.session_state:
-
-        try:
-
-            project["dataset"] = st.session_state[
-                "df"
-            ].copy()
-
-        except Exception:
-
-            project["dataset"] = None
-
-    else:
-
-        project["dataset"] = None
-
-    # --------------------------------------------------------
-    # PLS structure from Excel
-    # --------------------------------------------------------
-
-    if "pls_structure" in st.session_state:
-
-        try:
-
-            structure = st.session_state[
-                "pls_structure"
-            ]
-
-            if isinstance(
-                structure,
-                pd.DataFrame
-            ):
-
-                project["pls_structure"] = structure.copy()
-
-            else:
-
-                project["pls_structure"] = structure
-
-        except Exception:
-
-            project["pls_structure"] = None
-
-    else:
-
-        project["pls_structure"] = None
-
-    # --------------------------------------------------------
-    # Excel structure detection flag
-    # --------------------------------------------------------
-
-    project[
-        "excel_structure_detected"
-    ] = st.session_state.get(
-        "excel_structure_detected",
-        False
-    )
-
-    return project
-
-
-# ============================================================
-# HELPER: CREATE PROJECT FILE
-# ============================================================
-
-def create_project_file(project):
-
-    buffer = io.BytesIO()
+    # Create ZIP-based project file
+    package_buffer = io.BytesIO()
 
     with zipfile.ZipFile(
-        buffer,
+        package_buffer,
         mode="w",
         compression=zipfile.ZIP_DEFLATED
-    ) as archive:
+    ) as project_zip:
 
-        # ----------------------------------------------------
-        # Project metadata and session state
-        # ----------------------------------------------------
-
-        project_without_dataset = project.copy()
-
-        dataset = project_without_dataset.pop(
-            "dataset",
-            None
-        )
-
-        structure = project_without_dataset.pop(
-            "pls_structure",
-            None
-        )
-
-        session_bytes = pickle.dumps(
-            project_without_dataset
-        )
-
-        archive.writestr(
+        project_zip.writestr(
             "project.pkl",
-            session_bytes
+            pickle.dumps(complete_project)
         )
 
-        # ----------------------------------------------------
-        # Dataset
-        # ----------------------------------------------------
-
-        if isinstance(
-            dataset,
-            pd.DataFrame
-        ):
-
-            dataset_buffer = io.BytesIO()
-
-            dataset.to_pickle(
-                dataset_buffer
+        project_zip.writestr(
+            "project_info.txt",
+            (
+                f"Project Name: {project_name}\n"
+                f"Created: {metadata['created_at']}\n"
+                f"Application: AI Data Analysis Agent\n"
+                f"Format: AIDA Project\n"
             )
-
-            archive.writestr(
-                "dataset.pkl",
-                dataset_buffer.getvalue()
-            )
-
-        # ----------------------------------------------------
-        # Structure
-        # ----------------------------------------------------
-
-        if isinstance(
-            structure,
-            pd.DataFrame
-        ):
-
-            structure_buffer = io.BytesIO()
-
-            structure.to_pickle(
-                structure_buffer
-            )
-
-            archive.writestr(
-                "pls_structure.pkl",
-                structure_buffer.getvalue()
-            )
-
-        elif structure is not None:
-
-            structure_bytes = pickle.dumps(
-                structure
-            )
-
-            archive.writestr(
-                "pls_structure_raw.pkl",
-                structure_bytes
-            )
-
-        # ----------------------------------------------------
-        # Readable project information
-        # ----------------------------------------------------
-
-        dataset_rows = (
-            len(dataset)
-            if isinstance(
-                dataset,
-                pd.DataFrame
-            )
-            else 0
         )
 
-        dataset_columns = (
-            len(dataset.columns)
-            if isinstance(
-                dataset,
-                pd.DataFrame
-            )
-            else 0
-        )
+    package_buffer.seek(0)
 
-        information = f"""
-AI DATA ANALYSIS AGENT
-PROJECT PACKAGE
-
-Project Version: {PROJECT_VERSION}
-Saved At: {project.get("saved_at", "")}
-
-Dataset Rows: {dataset_rows}
-Dataset Columns: {dataset_columns}
-
-Files contained:
-- project.pkl
-- dataset.pkl (if dataset exists)
-- PLS-SEM structure information (if available)
-
-This project package is intended for research continuity.
-"""
-
-        archive.writestr(
-            "PROJECT_INFO.txt",
-            information.strip()
-        )
-
-    buffer.seek(0)
-
-    return buffer.getvalue()
+    return package_buffer.getvalue()
 
 
-# ============================================================
-# HELPER: LOAD PROJECT
-# ============================================================
+# ---------------------------------------------------------
+# OPEN PROJECT PACKAGE
+# ---------------------------------------------------------
+def open_project_package(uploaded_file):
+    """Open and restore an AIDA project."""
 
-def load_project_file(uploaded_file):
+    uploaded_bytes = uploaded_file.read()
 
-    project = None
-    dataset = None
-    structure = None
+    package_buffer = io.BytesIO(uploaded_bytes)
 
-    try:
+    with zipfile.ZipFile(package_buffer, "r") as project_zip:
 
-        file_bytes = uploaded_file.getvalue()
-
-        with zipfile.ZipFile(
-            io.BytesIO(file_bytes),
-            mode="r"
-        ) as archive:
-
-            files = archive.namelist()
-
-            # ------------------------------------------------
-            # Check project file
-            # ------------------------------------------------
-
-            if "project.pkl" not in files:
-
-                raise ValueError(
-                    "This file does not contain a valid "
-                    "AI Data Analysis Agent project."
-                )
-
-            project = pickle.loads(
-                archive.read(
-                    "project.pkl"
-                )
+        if "project.pkl" not in project_zip.namelist():
+            raise ValueError(
+                "This file is not a valid AIDA project."
             )
 
-            # ------------------------------------------------
-            # Dataset
-            # ------------------------------------------------
+        project_bytes = project_zip.read("project.pkl")
 
-            if "dataset.pkl" in files:
+    project = pickle.loads(project_bytes)
 
-                dataset = pd.read_pickle(
-                    io.BytesIO(
-                        archive.read(
-                            "dataset.pkl"
-                        )
-                    )
-                )
+    metadata = project.get("metadata", {})
+    project_data = project.get("project_data", {})
 
-            # ------------------------------------------------
-            # Structure
-            # ------------------------------------------------
+    # Clear old project data
+    keys_to_clear = [
+        "df",
+        "pls_structure",
+        "excel_structure_detected",
+    ] + SESSION_KEYS
 
-            if "pls_structure.pkl" in files:
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
 
-                structure = pd.read_pickle(
-                    io.BytesIO(
-                        archive.read(
-                            "pls_structure.pkl"
-                        )
-                    )
+    # Restore project
+    for key, value in project_data.items():
+        st.session_state[key] = value
 
-            elif "pls_structure_raw.pkl" in files:
-
-                structure = pickle.loads(
-                    archive.read(
-                        "pls_structure_raw.pkl"
-                    )
-                )
-
-        return (
-            project,
-            dataset,
-            structure
-        )
-
-    except Exception as error:
-
-        raise ValueError(
-            f"Could not open project: {error}"
-        )
+    return metadata
 
 
-# ============================================================
+# ---------------------------------------------------------
 # CURRENT PROJECT STATUS
-# ============================================================
+# ---------------------------------------------------------
+st.header("📊 Current Project")
 
-st.divider()
+if "df" in st.session_state:
 
-st.header(
-    "📊 Current Project"
-)
+    df = st.session_state["df"]
 
-current_df = st.session_state.get(
-    "df"
-)
+    col1, col2, col3, col4 = st.columns(4)
 
-current_hocs = st.session_state.get(
-    "pls_higher_order_models",
-    {}
-)
-
-current_constructs = st.session_state.get(
-    "pls_constructs",
-    {}
-)
-
-current_paths = st.session_state.get(
-    "pls_structural_paths",
-    []
-)
-
-current_hoc_paths = st.session_state.get(
-    "pls_higher_order_structural_paths",
-    []
-)
-
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-
-    if isinstance(
-        current_df,
-        pd.DataFrame
-    ):
-
+    with col1:
         st.metric(
-            "Dataset Rows",
-            current_df.shape[0]
+            "Respondents",
+            df.shape[0]
         )
 
-    else:
-
+    with col2:
         st.metric(
-            "Dataset Rows",
-            0
+            "Variables",
+            df.shape[1]
         )
 
-with col2:
+    with col3:
+        if "pls_constructs" in st.session_state:
+            st.metric(
+                "Simple Constructs",
+                len(st.session_state["pls_constructs"])
+            )
+        else:
+            st.metric(
+                "Simple Constructs",
+                0
+            )
 
-    if isinstance(
-        current_df,
-        pd.DataFrame
-    ):
+    with col4:
+        if "pls_higher_order_models" in st.session_state:
+            st.metric(
+                "Higher-Order Constructs",
+                len(st.session_state["pls_higher_order_models"])
+            )
+        elif "pls_higher_order_model" in st.session_state:
+            st.metric(
+                "Higher-Order Constructs",
+                1
+            )
+        else:
+            st.metric(
+                "Higher-Order Constructs",
+                0
+            )
 
-        st.metric(
-            "Dataset Variables",
-            current_df.shape[1]
-        )
+else:
 
-    else:
-
-        st.metric(
-            "Dataset Variables",
-            0
-        )
-
-with col3:
-
-    st.metric(
-        "Simple Constructs",
-        len(current_constructs)
-        if isinstance(
-            current_constructs,
-            dict
-        )
-        else 0
-    )
-
-with col4:
-
-    st.metric(
-        "Higher-Order Constructs",
-        len(current_hocs)
-        if isinstance(
-            current_hocs,
-            dict
-        )
-        else 0
+    st.info(
+        "No dataset is currently loaded. "
+        "Please upload your dataset from the Home page first."
     )
 
 
-# ============================================================
+# ---------------------------------------------------------
 # SAVE PROJECT
-# ============================================================
-
+# ---------------------------------------------------------
 st.divider()
 
-st.header(
-    "💾 Save Project"
-)
+st.header("💾 Save Project")
 
 project_name = st.text_input(
     "Project Name",
-    value="My_Research_Project",
-    help=(
-        "Give your research project a meaningful name. "
-        "The project file will be downloaded to your computer."
-    )
+    value="My_AI_Data_Analysis_Project",
+    help="Enter a name for your research project."
 )
 
 if st.button(
-    "💾 Save Project",
+    "💾 Prepare Project for Download",
     type="primary",
-    key="save_project"
+    use_container_width=True
 ):
 
-    if not project_name.strip():
+    if "df" not in st.session_state:
 
-        st.error(
-            "❌ Please enter a project name."
-        )
-
-    elif "df" not in st.session_state:
-
-        st.error(
-            "❌ No dataset is currently loaded."
+        st.warning(
+            "Please upload a dataset before saving the project."
         )
 
     else:
 
-        project = collect_project_state()
+        try:
 
-        project_bytes = create_project_file(
-            project
-        )
+            project_bytes = create_project_package(
+                project_name
+            )
 
-        safe_name = (
-            project_name.strip()
-            .replace(" ", "_")
-            .replace("/", "_")
-            .replace("\\", "_")
-        )
+            safe_name = (
+                project_name
+                .strip()
+                .replace(" ", "_")
+                .replace("/", "_")
+                .replace("\\", "_")
+            )
 
-        if not safe_name.lower().endswith(
-            ".aida"
-        ):
+            if not safe_name:
+                safe_name = "AI_Data_Analysis_Project"
 
-            safe_name += ".aida"
+            file_name = safe_name + ".aida"
 
-        st.download_button(
-            label="⬇️ Download Project File",
-            data=project_bytes,
-            file_name=safe_name,
-            mime="application/octet-stream",
-            key="download_project_file"
-        )
+            st.success(
+                "Project package created successfully."
+            )
 
-        st.success(
-            "✅ Project package prepared successfully."
-        )
+            st.download_button(
+                label="⬇️ Download Project File",
+                data=project_bytes,
+                file_name=file_name,
+                mime="application/octet-stream",
+                use_container_width=True
+            )
 
-        st.write(
-            "Download the project file and keep it safely. "
-            "You can upload this file later to restore your work."
-        )
+        except Exception as e:
+
+            st.error(
+                f"Could not create the project file: {e}"
+            )
 
 
-# ============================================================
+# ---------------------------------------------------------
 # OPEN PROJECT
-# ============================================================
-
+# ---------------------------------------------------------
 st.divider()
 
-st.header(
-    "📂 Open Previous Project"
-)
+st.header("📂 Open Project")
 
 st.write(
     "Upload a previously saved `.aida` project file."
 )
 
 uploaded_project = st.file_uploader(
-    "Choose Project File",
+    "Choose AIDA Project File",
     type=["aida"],
-    key="project_upload"
+    key="aida_project_uploader"
 )
-
 
 if uploaded_project is not None:
 
     if st.button(
         "📂 Open Project",
         type="primary",
-        key="open_project"
+        use_container_width=True
     ):
 
         try:
 
-            project, dataset, structure = (
-                load_project_file(
-                    uploaded_project
-                )
-            )
-
-            # ------------------------------------------------
-            # Restore session state
-            # ------------------------------------------------
-
-            saved_state = project.get(
-                "session_state",
-                {}
-            )
-
-            if isinstance(
-                saved_state,
-                dict
-            ):
-
-                for key, value in saved_state.items():
-
-                    st.session_state[
-                        key
-                    ] = value
-
-            # ------------------------------------------------
-            # Restore dataset
-            # ------------------------------------------------
-
-            if isinstance(
-                dataset,
-                pd.DataFrame
-            ):
-
-                st.session_state[
-                    "df"
-                ] = dataset.copy()
-
-            # ------------------------------------------------
-            # Restore structure
-            # ------------------------------------------------
-
-            if structure is not None:
-
-                if isinstance(
-                    structure,
-                    pd.DataFrame
-                ):
-
-                    st.session_state[
-                        "pls_structure"
-                    ] = structure.copy()
-
-                else:
-
-                    st.session_state[
-                        "pls_structure"
-                    ] = structure
-
-            # ------------------------------------------------
-            # Restore structure flag
-            # ------------------------------------------------
-
-            st.session_state[
-                "excel_structure_detected"
-            ] = project.get(
-                "excel_structure_detected",
-                False
-            )
-
-            # ------------------------------------------------
-            # Project metadata
-            # ------------------------------------------------
-
-            st.session_state[
-                "current_project_name"
-            ] = uploaded_project.name
-
-            st.session_state[
-                "current_project_saved_at"
-            ] = project.get(
-                "saved_at",
-                ""
+            metadata = open_project_package(
+                uploaded_project
             )
 
             st.success(
-                "✅ Project opened successfully."
+                "Project opened successfully!"
             )
 
-            if isinstance(
-                dataset,
-                pd.DataFrame
-            ):
+            project_name_loaded = metadata.get(
+                "project_name",
+                "Unknown Project"
+            )
 
-                st.write(
-                    f"**Dataset:** "
-                    f"{dataset.shape[0]} respondents × "
-                    f"{dataset.shape[1]} variables"
-                )
-
-            if isinstance(
-                saved_state.get(
-                    "pls_higher_order_models"
-                ),
-                dict
-            ):
-
-                st.write(
-                    f"**Higher-Order Constructs restored:** "
-                    f"{len(saved_state['pls_higher_order_models'])}"
-                )
-
-            if isinstance(
-                saved_state.get(
-                    "pls_higher_order_structural_paths"
-                ),
-                list
-            ):
-
-                st.write(
-                    f"**Higher-Order Structural Paths restored:** "
-                    f"{len(saved_state['pls_higher_order_structural_paths'])}"
-                )
+            created_at = metadata.get(
+                "created_at",
+                "Unknown"
+            )
 
             st.info(
-                "🔄 The project information is now restored "
-                "in the current session. You can continue analysis "
-                "from the relevant page."
+                f"**Project:** {project_name_loaded}\n\n"
+                f"**Created:** {created_at}"
             )
 
-        except Exception as error:
+            st.rerun()
+
+        except Exception as e:
 
             st.error(
-                "❌ Could not open this project file."
-            )
-
-            st.exception(
-                error
+                f"Could not open this project file: {e}"
             )
 
 
-# ============================================================
-# CURRENT SAVED PROJECT INFORMATION
-# ============================================================
-
-if (
-    "current_project_name"
-    in st.session_state
-):
-
-    st.divider()
-
-    st.subheader(
-        "📌 Current Project Information"
-    )
-
-    st.write(
-        f"**Project File:** "
-        f"{st.session_state['current_project_name']}"
-    )
-
-    saved_at = st.session_state.get(
-        "current_project_saved_at",
-        ""
-    )
-
-    if saved_at:
-
-        st.write(
-            f"**Saved At:** {saved_at}"
-        )
-
-
-# ============================================================
-# WHAT IS SAVED?
-# ============================================================
-
+# ---------------------------------------------------------
+# SAVED PROJECT INFORMATION
+# ---------------------------------------------------------
 st.divider()
 
-st.header(
-    "📦 What Is Saved in the Project?"
-)
+st.header("📋 Project Information")
 
-saved_items = [
-    "Dataset",
-    "Excel PLS-SEM structure",
-    "Simple PLS-SEM constructs",
-    "Simple structural paths",
-    "Higher-Order Constructs",
-    "Higher-Order Structural Model",
-    "Higher-Order Structural Paths",
-    "Measurement/analysis decisions when stored in session state",
-    "Mediation results when available"
-]
+if "df" in st.session_state:
 
-for item in saved_items:
+    df = st.session_state["df"]
 
-    st.write(
-        f"✅ {item}"
+    information = {
+        "Dataset Loaded": "Yes",
+        "Respondents": df.shape[0],
+        "Variables": df.shape[1],
+        "Simple PLS-SEM Model": (
+            "Yes"
+            if "pls_constructs" in st.session_state
+            else "No"
+        ),
+        "Simple Structural Model": (
+            "Yes"
+            if "pls_structural_paths" in st.session_state
+            else "No"
+        ),
+        "Higher-Order Model": (
+            "Yes"
+            if (
+                "pls_higher_order_models" in st.session_state
+                or "pls_higher_order_model" in st.session_state
+            )
+            else "No"
+        ),
+        "Higher-Order Structural Model": (
+            "Yes"
+            if "pls_higher_order_structural_paths"
+            in st.session_state
+            else "No"
+        ),
+        "Mediation Analysis": (
+            "Yes"
+            if "mediation_results" in st.session_state
+            else "No"
+        ),
+    }
+
+    info_df = pd.DataFrame(
+        list(information.items()),
+        columns=["Project Component", "Status"]
+    )
+
+    st.dataframe(
+        info_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+else:
+
+    st.info(
+        "Project information will appear here after a dataset is loaded."
     )
 
 
-# ============================================================
-# IMPORTANT NOTE
-# ============================================================
-
-st.divider()
-
-st.info(
-    "🔐 Privacy note: The project package contains your dataset "
-    "and research-model information. Treat it like your original "
-    "research data and store it securely. Do not upload confidential "
-    "or personally identifiable research data to an unsecured location."
-)
-
-
-# ============================================================
-# METHOD NOTE
-# ============================================================
-
+# ---------------------------------------------------------
+# PRIVACY / SECURITY NOTE
+# ---------------------------------------------------------
 st.divider()
 
 st.caption(
-    "AI Data Analysis Agent — Project Manager. "
-    "Project packages are designed to preserve research work "
-    "between sessions and are not a substitute for institutional "
-    "data-management or backup procedures."
+    "🔐 Project files are created locally in your browser through "
+    "the Streamlit download process. Only open AIDA project files "
+    "that you trust."
 )
