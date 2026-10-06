@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-
+import plotly.graph_objects as go
+from itertools import combinations
 
 # ============================================================
 # PAGE CONFIG
@@ -16,10 +17,15 @@ st.set_page_config(
 st.title("📐 Higher-Order Measurement Model")
 
 st.write(
-    "This page evaluates the dimensions and indicators of the "
-    "Higher-Order Construct already defined in the previous step."
+    "Evaluate the measurement quality of a Higher-Order Construct "
+    "through its dimensions and questionnaire indicators."
 )
 
+st.info(
+    "This page uses the Higher-Order Construct model saved on the "
+    "previous page. The researcher remains responsible for the "
+    "theoretical specification of reflective and formative constructs."
+)
 
 # ============================================================
 # CHECK DATASET
@@ -27,66 +33,67 @@ st.write(
 
 if "df" not in st.session_state:
     st.warning(
-        "⚠️ Please upload your dataset on the Home page first."
+        "⚠️ Please upload your questionnaire dataset on the Home page first."
     )
     st.stop()
 
 df = st.session_state["df"].copy()
-
-st.success("✅ Dataset loaded successfully.")
-
 
 # ============================================================
 # CHECK HIGHER-ORDER MODEL
 # ============================================================
 
 if "pls_higher_order_model" not in st.session_state:
+
     st.warning(
         "⚠️ No Higher-Order Construct model has been saved yet."
     )
 
     st.info(
-        "Please go to Higher-Order Construct Setup, define the "
-        "model, and save it first."
+        "Please define and save your model on "
+        "7_2 Higher-Order Construct first."
     )
 
     st.stop()
 
+higher_order_model = st.session_state[
+    "pls_higher_order_model"
+]
 
-model = st.session_state["pls_higher_order_model"]
-
-hoc_name = model.get(
+hoc_name = higher_order_model.get(
     "name",
     "Higher-Order Construct"
 )
 
-hoc_type = model.get(
+hoc_type = higher_order_model.get(
     "type",
     "Reflective"
 )
 
-dimensions = model.get(
+dimensions = higher_order_model.get(
     "dimensions",
     {}
 )
 
-
 if not dimensions:
+
     st.error(
-        "❌ No dimensions were found in the saved model."
+        "❌ The Higher-Order Construct contains no dimensions."
     )
+
     st.stop()
 
+# ============================================================
+# BASIC DATA INFORMATION
+# ============================================================
 
-# ============================================================
-# DATASET INFORMATION
-# ============================================================
+numeric_columns = df.select_dtypes(
+    include=["number"]
+).columns.tolist()
 
 st.divider()
 
-st.subheader("📋 Dataset Information")
-
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(
@@ -106,74 +113,49 @@ with col3:
         len(dimensions)
     )
 
-
-# ============================================================
-# HIGHER-ORDER MODEL
-# ============================================================
-
-st.divider()
-
-st.subheader("🏗️ Higher-Order Construct")
-
-st.markdown(
-    "### " + str(hoc_name)
-)
-
-st.write(
-    "**Higher-Order Measurement Type:** "
-    + str(hoc_type)
-)
-
-
-# ============================================================
-# MODEL STRUCTURE
-# ============================================================
-
-model_rows = []
-
-for dimension_name, information in dimensions.items():
-
-    items = information.get(
-        "items",
-        []
+with col4:
+    total_indicators = sum(
+        len(info.get("items", []))
+        for info in dimensions.values()
     )
 
-    dimension_type = information.get(
-        "type",
-        "Reflective"
+    st.metric(
+        "Indicators",
+        total_indicators
     )
 
-    model_rows.append(
-        {
-            "Dimension": dimension_name,
-            "Dimension Type": dimension_type,
-            "Number of Indicators": len(items),
-            "Indicators": ", ".join(items)
-        }
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def numeric_series(data, column):
+    return pd.to_numeric(
+        data[column],
+        errors="coerce"
     )
 
-
-model_table = pd.DataFrame(model_rows)
-
-st.dataframe(
-    model_table,
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# ============================================================
-# FUNCTIONS
-# ============================================================
 
 def cronbach_alpha(data):
+    """
+    Cronbach's alpha.
+    """
 
-    data = data.dropna()
+    data = data.apply(
+        pd.to_numeric,
+        errors="coerce"
+    )
 
-    if data.shape[1] < 2:
+    data = data.dropna(
+        axis=0,
+        how="any"
+    )
+
+    k = data.shape[1]
+
+    if k < 2:
         return np.nan
 
-    item_variance = data.var(
+    item_variances = data.var(
         axis=0,
         ddof=1
     )
@@ -189,27 +171,38 @@ def cronbach_alpha(data):
     if total_variance == 0:
         return np.nan
 
-    k = data.shape[1]
-
     alpha = (
         k / (k - 1)
     ) * (
         1 -
-        item_variance.sum() /
+        item_variances.sum() /
         total_variance
     )
 
     return alpha
 
 
-def calculate_loadings(data):
+def iterative_mode_a_loadings(data):
+    """
+    PLS-style Mode A loading diagnostic.
 
-    data = data.dropna()
+    This is a research-support implementation and is not
+    presented as an exact SmartPLS algorithm.
+    """
 
-    if data.shape[1] == 1:
+    data = data.apply(
+        pd.to_numeric,
+        errors="coerce"
+    )
 
+    data = data.dropna(
+        axis=0,
+        how="any"
+    )
+
+    if data.shape[1] < 2:
         return pd.Series(
-            [1.0],
+            1.0,
             index=data.columns
         )
 
@@ -219,523 +212,1493 @@ def calculate_loadings(data):
         ddof=0
     )
 
-    standardized = standardized.dropna()
+    weights = pd.Series(
+        1.0,
+        index=data.columns
+    )
 
-    if standardized.empty:
+    weights = weights / np.sqrt(
+        np.sum(weights ** 2)
+    )
 
-        return pd.Series(
-            np.nan,
-            index=data.columns
+    for _ in range(100):
+
+        composite = (
+            standardized *
+            weights
+        ).sum(
+            axis=1
         )
 
-    score = standardized.mean(
+        new_loadings = standardized.apply(
+            lambda column:
+            column.corr(
+                composite
+            )
+        )
+
+        new_loadings = new_loadings.fillna(
+            0
+        )
+
+        new_weights = (
+            new_loadings.abs()
+        )
+
+        if new_weights.sum() == 0:
+            break
+
+        new_weights = (
+            new_weights /
+            np.sqrt(
+                np.sum(
+                    new_weights ** 2
+                )
+            )
+        )
+
+        if np.max(
+            np.abs(
+                new_weights.values -
+                weights.values
+            )
+        ) < 0.000001:
+
+            weights = new_weights
+            break
+
+        weights = new_weights
+
+    composite = (
+        standardized *
+        weights
+    ).sum(
         axis=1
     )
 
-    results = {}
-
-    for column in standardized.columns:
-
-        correlation = standardized[
-            column
-        ].corr(score)
-
-        results[column] = abs(
-            correlation
+    loadings = standardized.apply(
+        lambda column:
+        column.corr(
+            composite
         )
+    )
 
-    return pd.Series(results)
+    return loadings.fillna(0)
 
 
 def composite_reliability(loadings):
+    """
+    Composite Reliability using standardized loadings.
+    """
 
-    values = np.asarray(
-        loadings,
-        dtype=float
-    )
+    loadings = pd.Series(
+        loadings
+    ).dropna()
 
-    values = values[
-        ~np.isnan(values)
-    ]
-
-    if len(values) == 0:
+    if len(loadings) == 0:
         return np.nan
 
-    error_variance = (
-        1 -
-        values ** 2
-    )
-
     numerator = (
-        values.sum()
+        loadings.sum()
     ) ** 2
 
     denominator = (
         numerator +
-        error_variance.sum()
+        np.sum(
+            1 -
+            loadings ** 2
+        )
     )
 
     if denominator == 0:
         return np.nan
 
-    return (
-        numerator /
-        denominator
-    )
+    return numerator / denominator
 
 
-def calculate_ave(loadings):
+def average_variance_extracted(loadings):
+    """
+    AVE = mean squared standardized loadings.
+    """
 
-    values = np.asarray(
-        loadings,
-        dtype=float
-    )
+    loadings = pd.Series(
+        loadings
+    ).dropna()
 
-    values = values[
-        ~np.isnan(values)
-    ]
-
-    if len(values) == 0:
+    if len(loadings) == 0:
         return np.nan
 
     return np.mean(
-        values ** 2
+        loadings ** 2
     )
 
 
+def calculate_vif(data):
+    """
+    VIF calculated from regressions among indicators.
+    """
+
+    data = data.apply(
+        pd.to_numeric,
+        errors="coerce"
+    ).dropna()
+
+    if data.shape[1] < 2:
+        return pd.Series(
+            1.0,
+            index=data.columns
+        )
+
+    results = {}
+
+    for target in data.columns:
+
+        predictors = [
+            col
+            for col in data.columns
+            if col != target
+        ]
+
+        if not predictors:
+            results[target] = 1.0
+            continue
+
+        y = data[target].values
+        X = data[predictors].values
+
+        X = np.column_stack(
+            [
+                np.ones(
+                    len(X)
+                ),
+                X
+            ]
+        )
+
+        try:
+
+            beta = np.linalg.lstsq(
+                X,
+                y,
+                rcond=None
+            )[0]
+
+            predicted = X @ beta
+
+            ss_res = np.sum(
+                (y - predicted) ** 2
+            )
+
+            ss_tot = np.sum(
+                (y - np.mean(y)) ** 2
+            )
+
+            if ss_tot == 0:
+                r_squared = 0
+
+            else:
+                r_squared = (
+                    1 -
+                    ss_res /
+                    ss_tot
+                )
+
+            if r_squared >= 0.999999:
+                vif = np.inf
+
+            else:
+                vif = (
+                    1 /
+                    (1 - r_squared)
+                )
+
+        except Exception:
+            vif = np.nan
+
+        results[target] = vif
+
+    return pd.Series(results)
+
+
+def construct_score(data):
+    """
+    Standardized mean composite score.
+    """
+
+    data = data.apply(
+        pd.to_numeric,
+        errors="coerce"
+    )
+
+    return data.mean(
+        axis=1
+    )
+
+
+def correlation_matrix(data):
+    return data.corr()
+
+
+def calculate_htmt(scores_dict):
+    """
+    HTMT-style diagnostic between dimensions.
+
+    Uses indicator correlations between dimensions
+    relative to within-dimension correlations.
+    """
+
+    results = {}
+
+    names = list(
+        scores_dict.keys()
+    )
+
+    for first, second in combinations(
+        names,
+        2
+    ):
+
+        first_data = scores_dict[first]
+        second_data = scores_dict[second]
+
+        first_items = list(
+            first_data.columns
+        )
+
+        second_items = list(
+            second_data.columns
+        )
+
+        heterotrait = []
+
+        for item_a in first_items:
+
+            for item_b in second_items:
+
+                corr = first_data[
+                    item_a
+                ].corr(
+                    second_data[
+                        item_b
+                    ]
+                )
+
+                if pd.notna(corr):
+                    heterotrait.append(
+                        abs(corr)
+                    )
+
+        monotrait_first = []
+
+        for a, b in combinations(
+            first_items,
+            2
+        ):
+
+            corr = first_data[
+                a
+            ].corr(
+                first_data[
+                    b
+                ]
+            )
+
+            if pd.notna(corr):
+                monotrait_first.append(
+                    abs(corr)
+                )
+
+        monotrait_second = []
+
+        for a, b in combinations(
+            second_items,
+            2
+        ):
+
+            corr = second_data[
+                a
+            ].corr(
+                second_data[
+                    b
+                ]
+            )
+
+            if pd.notna(corr):
+                monotrait_second.append(
+                    abs(corr)
+                )
+
+        if (
+            not heterotrait
+            or not monotrait_first
+            or not monotrait_second
+        ):
+
+            value = np.nan
+
+        else:
+
+            numerator = np.mean(
+                heterotrait
+            )
+
+            denominator = np.sqrt(
+                np.mean(
+                    monotrait_first
+                )
+                *
+                np.mean(
+                    monotrait_second
+                )
+            )
+
+            if denominator == 0:
+                value = np.nan
+            else:
+                value = (
+                    numerator /
+                    denominator
+                )
+
+        results[
+            f"{first} ↔ {second}"
+        ] = value
+
+    return pd.Series(results)
+
+
 # ============================================================
-# FIRST-ORDER MEASUREMENT MODEL
+# MODEL OVERVIEW
 # ============================================================
 
 st.divider()
 
 st.subheader(
-    "1️⃣ First-Order Dimension Measurement"
+    "🏗️ Higher-Order Model Overview"
 )
 
-st.write(
-    "The indicators belonging to each dimension are evaluated "
-    "according to the measurement type specified in the model."
-)
-
-
-dimension_results = []
-
-all_loading_rows = []
-
-
-# ============================================================
-# PROCESS DIMENSIONS
-# ============================================================
+overview_rows = []
 
 for dimension_name, information in dimensions.items():
-
-    dimension_type = information.get(
-        "type",
-        "Reflective"
-    )
 
     items = information.get(
         "items",
         []
     )
 
-    valid_items = [
-        item
-        for item in items
-        if item in df.columns
-    ]
+    overview_rows.append(
+        {
+            "Higher-Order Construct":
+                hoc_name,
+            "HOC Type":
+                hoc_type,
+            "Dimension":
+                dimension_name,
+            "Dimension Type":
+                information.get(
+                    "type",
+                    "Reflective"
+                ),
+            "Indicators":
+                len(items),
+            "Indicator List":
+                ", ".join(items)
+        }
+    )
 
-    if not valid_items:
+overview_df = pd.DataFrame(
+    overview_rows
+)
 
-        continue
+st.dataframe(
+    overview_df,
+    use_container_width=True,
+    hide_index=True
+)
+
+# ============================================================
+# INDICATOR VALIDATION
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "🔎 Indicator Validation"
+)
+
+missing_items = []
+
+for dimension_name, information in dimensions.items():
+
+    for item in information.get(
+        "items",
+        []
+    ):
+
+        if item not in df.columns:
+            missing_items.append(
+                (
+                    dimension_name,
+                    item
+                )
+            )
+
+if missing_items:
+
+    st.error(
+        "❌ Some indicators in the Higher-Order model "
+        "are not present in the uploaded dataset."
+    )
+
+    missing_table = pd.DataFrame(
+        [
+            {
+                "Dimension": dimension,
+                "Missing Indicator": item
+            }
+            for dimension, item in missing_items
+        ]
+    )
+
+    st.dataframe(
+        missing_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.stop()
+
+else:
+
+    st.success(
+        "✅ All Higher-Order model indicators "
+        "are present in the dataset."
+    )
+
+# ============================================================
+# INDICATOR DESCRIPTIVE STATISTICS
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "📊 Indicator Descriptive Statistics"
+)
+
+indicator_rows = []
+
+for dimension_name, information in dimensions.items():
+
+    for item in information.get(
+        "items",
+        []
+    ):
+
+        series = numeric_series(
+            df,
+            item
+        )
+
+        indicator_rows.append(
+            {
+                "Dimension":
+                    dimension_name,
+                "Indicator":
+                    item,
+                "Valid":
+                    int(
+                        series.notna().sum()
+                    ),
+                "Missing":
+                    int(
+                        series.isna().sum()
+                    ),
+                "Mean":
+                    round(
+                        series.mean(),
+                        3
+                    ),
+                "Std. Deviation":
+                    round(
+                        series.std(),
+                        3
+                    ),
+                "Minimum":
+                    round(
+                        series.min(),
+                        3
+                    ),
+                "Maximum":
+                    round(
+                        series.max(),
+                        3
+                    )
+            }
+        )
+
+indicator_stats = pd.DataFrame(
+    indicator_rows
+)
+
+st.dataframe(
+    indicator_stats,
+    use_container_width=True,
+    hide_index=True
+)
+
+# ============================================================
+# DIMENSION MEASUREMENT RESULTS
+# ============================================================
+
+st.divider()
+
+st.header(
+    "📐 Dimension-Level Measurement Model"
+)
+
+st.write(
+    "The following diagnostics evaluate each dimension "
+    "using its assigned questionnaire indicators."
+)
+
+measurement_results = []
+
+dimension_loadings = {}
+
+dimension_scores = {}
+
+dimension_raw_data = {}
+
+for dimension_name, information in dimensions.items():
+
+    items = information.get(
+        "items",
+        []
+    )
+
+    measurement_type = information.get(
+        "type",
+        "Reflective"
+    )
 
     data = df[
-        valid_items
+        items
     ].apply(
         pd.to_numeric,
         errors="coerce"
     )
 
+    dimension_raw_data[
+        dimension_name
+    ] = data
 
-    # ========================================================
-    # REFLECTIVE DIMENSION
-    # ========================================================
+    # --------------------------------------------------------
+    # REFLECTIVE
+    # --------------------------------------------------------
 
-    if dimension_type == "Reflective":
+    if measurement_type == "Reflective":
 
-        loadings = calculate_loadings(
+        loadings = iterative_mode_a_loadings(
             data
         )
+
+        dimension_loadings[
+            dimension_name
+        ] = loadings
 
         alpha = cronbach_alpha(
             data
         )
 
         cr = composite_reliability(
-            loadings.values
+            loadings
         )
 
-        ave = calculate_ave(
-            loadings.values
+        ave = average_variance_extracted(
+            loadings
         )
 
-        dimension_results.append(
-            {
-                "Dimension": dimension_name,
-                "Type": "Reflective",
-                "Indicators": len(valid_items),
-                "Cronbach Alpha": alpha,
-                "Composite Reliability": cr,
-                "AVE": ave
-            }
-        )
-
-        for item, loading in loadings.items():
-
-            if loading >= 0.708:
-                status = "Good"
-
-            elif loading >= 0.40:
-                status = "Review"
-
-            else:
-                status = "Weak"
-
-            all_loading_rows.append(
-                {
-                    "Dimension": dimension_name,
-                    "Indicator": item,
-                    "Loading": loading,
-                    "Status": status
-                }
-            )
-
-
-    # ========================================================
-    # FORMATIVE DIMENSION
-    # ========================================================
-
-    else:
-
-        dimension_results.append(
-            {
-                "Dimension": dimension_name,
-                "Type": "Formative",
-                "Indicators": len(valid_items),
-                "Cronbach Alpha": np.nan,
-                "Composite Reliability": np.nan,
-                "AVE": np.nan
-            }
-        )
-
-
-# ============================================================
-# DIMENSION RESULTS
-# ============================================================
-
-st.subheader(
-    "📊 Dimension Reliability and Validity"
-)
-
-if dimension_results:
-
-    results_df = pd.DataFrame(
-        dimension_results
-    )
-
-    st.dataframe(
-        results_df.style.format(
-            {
-                "Cronbach Alpha": "{:.3f}",
-                "Composite Reliability": "{:.3f}",
-                "AVE": "{:.3f}"
-            },
-            na_rep="—"
-        ),
-        use_container_width=True,
-        hide_index=True
-    )
-
-else:
-
-    st.warning(
-        "⚠️ No dimension results could be calculated."
-    )
-
-
-# ============================================================
-# INDICATOR LOADINGS
-# ============================================================
-
-st.divider()
-
-st.subheader(
-    "📊 Reflective Indicator Loadings"
-)
-
-if all_loading_rows:
-
-    loading_df = pd.DataFrame(
-        all_loading_rows
-    )
-
-    st.dataframe(
-        loading_df.style.format(
-            {
-                "Loading": "{:.3f}"
-            }
-        ),
-        use_container_width=True,
-        hide_index=True
-    )
-
-else:
-
-    st.info(
-        "No reflective dimensions are available."
-    )
-
-
-# ============================================================
-# DIMENSION SCORES
-# ============================================================
-
-st.divider()
-
-st.subheader(
-    "📈 Dimension Scores"
-)
-
-dimension_scores = {}
-
-for dimension_name, information in dimensions.items():
-
-    items = information.get(
-        "items",
-        []
-    )
-
-    valid_items = [
-        item
-        for item in items
-        if item in df.columns
-    ]
-
-    if valid_items:
-
-        data = df[
-            valid_items
-        ].apply(
-            pd.to_numeric,
-            errors="coerce"
+        score = construct_score(
+            data
         )
 
         dimension_scores[
             dimension_name
-        ] = data.mean(
-            axis=1
+        ] = score
+
+        min_loading = (
+            loadings.min()
+            if len(loadings)
+            else np.nan
         )
 
+        max_loading = (
+            loadings.max()
+            if len(loadings)
+            else np.nan
+        )
 
-if dimension_scores:
+        measurement_results.append(
+            {
+                "Dimension":
+                    dimension_name,
+                "Type":
+                    "Reflective",
+                "Indicators":
+                    len(items),
+                "Min Loading":
+                    round(
+                        min_loading,
+                        3
+                    ),
+                "Max Loading":
+                    round(
+                        max_loading,
+                        3
+                    ),
+                "Cronbach Alpha":
+                    round(
+                        alpha,
+                        3
+                    )
+                    if pd.notna(alpha)
+                    else np.nan,
+                "Composite Reliability":
+                    round(
+                        cr,
+                        3
+                    )
+                    if pd.notna(cr)
+                    else np.nan,
+                "AVE":
+                    round(
+                        ave,
+                        3
+                    )
+                    if pd.notna(ave)
+                    else np.nan
+            }
+        )
 
-    score_df = pd.DataFrame(
-        dimension_scores
-    )
+    # --------------------------------------------------------
+    # FORMATIVE
+    # --------------------------------------------------------
 
-    st.dataframe(
-        score_df.describe().T[
-            [
-                "count",
-                "mean",
-                "std",
-                "min",
-                "max"
-            ]
-        ].round(3),
-        use_container_width=True
-    )
+    else:
 
+        vif = calculate_vif(
+            data
+        )
+
+        score = construct_score(
+            data
+        )
+
+        dimension_scores[
+            dimension_name
+        ] = score
+
+        min_vif = (
+            vif.min()
+            if len(vif)
+            else np.nan
+        )
+
+        max_vif = (
+            vif.max()
+            if len(vif)
+            else np.nan
+        )
+
+        measurement_results.append(
+            {
+                "Dimension":
+                    dimension_name,
+                "Type":
+                    "Formative",
+                "Indicators":
+                    len(items),
+                "Min Loading":
+                    np.nan,
+                "Max Loading":
+                    np.nan,
+                "Cronbach Alpha":
+                    np.nan,
+                "Composite Reliability":
+                    np.nan,
+                "AVE":
+                    np.nan,
+                "Min VIF":
+                    round(
+                        min_vif,
+                        3
+                    )
+                    if pd.notna(min_vif)
+                    else np.nan,
+                "Max VIF":
+                    round(
+                        max_vif,
+                        3
+                    )
+                    if pd.notna(max_vif)
+                    else np.nan
+            }
+        )
+
+measurement_df = pd.DataFrame(
+    measurement_results
+)
+
+st.dataframe(
+    measurement_df,
+    use_container_width=True,
+    hide_index=True
+)
 
 # ============================================================
-# DIMENSION CORRELATION
-# ============================================================
-
-if len(dimension_scores) >= 2:
-
-    st.divider()
-
-    st.subheader(
-        "🔗 Dimension Correlations"
-    )
-
-    score_df = pd.DataFrame(
-        dimension_scores
-    )
-
-    correlation_df = score_df.corr()
-
-    st.dataframe(
-        correlation_df.round(3),
-        use_container_width=True
-    )
-
-
-# ============================================================
-# HIGHER-ORDER CONSTRUCT
+# LOADING DETAILS
 # ============================================================
 
 st.divider()
 
 st.subheader(
-    "2️⃣ Higher-Order Construct"
+    "📌 Indicator Loading Details"
 )
 
-st.markdown(
-    "### " + str(hoc_name)
-)
+loading_rows = []
 
-st.write(
-    "**Measurement Type:** "
-    + str(hoc_type)
-)
+for dimension_name, loadings in dimension_loadings.items():
 
+    for indicator, loading in loadings.items():
 
-if len(dimension_scores) < 2:
+        if loading >= 0.708:
+            status = "Good"
 
-    st.warning(
-        "⚠️ At least two dimensions are needed for "
-        "higher-order construct assessment."
+        elif loading >= 0.40:
+            status = "Review"
+
+        else:
+            status = "Low"
+
+        loading_rows.append(
+            {
+                "Dimension":
+                    dimension_name,
+                "Indicator":
+                    indicator,
+                "Loading":
+                    round(
+                        loading,
+                        3
+                    ),
+                "Status":
+                    status
+            }
+        )
+
+if loading_rows:
+
+    loading_df = pd.DataFrame(
+        loading_rows
     )
 
-else:
-
-    score_df = pd.DataFrame(
-        dimension_scores
+    st.dataframe(
+        loading_df,
+        use_container_width=True,
+        hide_index=True
     )
 
-    # ========================================================
-    # REFLECTIVE HOC
-    # ========================================================
+    st.caption(
+        "Loading values around 0.708 or above are commonly "
+        "associated with approximately 50% explained indicator variance. "
+        "Lower values should be evaluated in the context of theory, "
+        "content validity, reliability, and the overall measurement model."
+    )
 
-    if hoc_type == "Reflective":
+# ============================================================
+# FORMATIVE VIF
+# ============================================================
 
-        st.info(
-            "The dimensions are treated as reflective "
-            "indicators of the higher-order construct."
+formative_dimensions = [
+    name
+    for name, information in dimensions.items()
+    if information.get(
+        "type",
+        "Reflective"
+    ) == "Formative"
+]
+
+if formative_dimensions:
+
+    st.divider()
+
+    st.subheader(
+        "📊 Formative Indicator Collinearity"
+    )
+
+    formative_vif_rows = []
+
+    for dimension_name in formative_dimensions:
+
+        data = dimension_raw_data[
+            dimension_name
+        ]
+
+        vif = calculate_vif(
+            data
         )
 
-        hoc_loadings = calculate_loadings(
-            score_df
-        )
+        for indicator, value in vif.items():
 
-        hoc_alpha = cronbach_alpha(
-            score_df
-        )
+            if pd.isna(value):
+                status = "Not available"
 
-        hoc_cr = composite_reliability(
-            hoc_loadings.values
-        )
-
-        hoc_ave = calculate_ave(
-            hoc_loadings.values
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-
-            st.metric(
-                "Cronbach Alpha",
-                (
-                    f"{hoc_alpha:.3f}"
-                    if not pd.isna(hoc_alpha)
-                    else "—"
-                )
-            )
-
-        with col2:
-
-            st.metric(
-                "Composite Reliability",
-                (
-                    f"{hoc_cr:.3f}"
-                    if not pd.isna(hoc_cr)
-                    else "—"
-                )
-            )
-
-        with col3:
-
-            st.metric(
-                "AVE",
-                (
-                    f"{hoc_ave:.3f}"
-                    if not pd.isna(hoc_ave)
-                    else "—"
-                )
-            )
-
-        hoc_rows = []
-
-        for dimension_name, loading in hoc_loadings.items():
-
-            if loading >= 0.708:
+            elif value < 3:
                 status = "Good"
 
-            elif loading >= 0.40:
+            elif value < 5:
                 status = "Review"
 
             else:
-                status = "Weak"
+                status = "High"
 
-            hoc_rows.append(
+            formative_vif_rows.append(
                 {
-                    "Dimension": dimension_name,
-                    "HOC Loading": loading,
-                    "Status": status
+                    "Dimension":
+                        dimension_name,
+                    "Indicator":
+                        indicator,
+                    "VIF":
+                        round(
+                            value,
+                            3
+                        )
+                        if np.isfinite(value)
+                        else np.inf,
+                    "Status":
+                        status
                 }
             )
 
-        hoc_df = pd.DataFrame(
-            hoc_rows
-        )
+    st.dataframe(
+        pd.DataFrame(
+            formative_vif_rows
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+# ============================================================
+# HTMT BETWEEN DIMENSIONS
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "🔗 HTMT Between Dimensions"
+)
+
+reflective_dimensions = [
+    name
+    for name, information in dimensions.items()
+    if information.get(
+        "type",
+        "Reflective"
+    ) == "Reflective"
+]
+
+if len(reflective_dimensions) >= 2:
+
+    reflective_scores_data = {
+        name:
+        dimension_raw_data[name]
+        for name in reflective_dimensions
+    }
+
+    htmt = calculate_htmt(
+        reflective_scores_data
+    )
+
+    if not htmt.empty:
+
+        htmt_rows = []
+
+        for pair, value in htmt.items():
+
+            if pd.isna(value):
+                status = "Not available"
+
+            elif value < 0.85:
+                status = "Good"
+
+            elif value < 0.90:
+                status = "Review"
+
+            else:
+                status = "Potential discriminant validity concern"
+
+            htmt_rows.append(
+                {
+                    "Dimension Pair":
+                        pair,
+                    "HTMT":
+                        round(
+                            value,
+                            3
+                        )
+                        if pd.notna(value)
+                        else np.nan,
+                    "Status":
+                        status
+                }
+            )
 
         st.dataframe(
-            hoc_df.style.format(
-                {
-                    "HOC Loading": "{:.3f}"
-                }
+            pd.DataFrame(
+                htmt_rows
             ),
             use_container_width=True,
             hide_index=True
         )
 
+        st.caption(
+            "HTMT is a discriminant-validity diagnostic. "
+            "Thresholds should be interpreted according to the "
+            "research context and methodological literature."
+        )
 
-    # ========================================================
-    # FORMATIVE HOC
-    # ========================================================
+else:
+
+    st.info(
+        "HTMT requires at least two reflective dimensions."
+    )
+
+# ============================================================
+# FORNELL-LARCKER
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "📋 Fornell–Larcker Criterion"
+)
+
+if len(reflective_dimensions) >= 2:
+
+    reflective_score_table = pd.DataFrame(
+        {
+            name:
+            dimension_scores[name]
+            for name in reflective_dimensions
+        }
+    )
+
+    correlations = reflective_score_table.corr()
+
+    ave_values = {}
+
+    for dimension_name in reflective_dimensions:
+
+        loadings = dimension_loadings.get(
+            dimension_name
+        )
+
+        if loadings is not None:
+
+            ave_values[
+                dimension_name
+            ] = average_variance_extracted(
+                loadings
+            )
+
+    fornell_larcker = correlations.copy()
+
+    for dimension_name in reflective_dimensions:
+
+        ave = ave_values.get(
+            dimension_name,
+            np.nan
+        )
+
+        if pd.notna(ave):
+
+            fornell_larcker.loc[
+                dimension_name,
+                dimension_name
+            ] = np.sqrt(
+                ave
+            )
+
+    st.dataframe(
+        fornell_larcker.round(3),
+        use_container_width=True
+    )
+
+    st.caption(
+        "Diagonal values represent the square root of AVE; "
+        "off-diagonal values represent correlations among dimensions."
+    )
+
+else:
+
+    st.info(
+        "Fornell–Larcker evaluation requires at least "
+        "two reflective dimensions."
+    )
+
+# ============================================================
+# HIGHER-ORDER COMPOSITE SCORE
+# ============================================================
+
+st.divider()
+
+st.header(
+    "🏗️ Higher-Order Construct Score"
+)
+
+st.write(
+    "Dimension scores are combined to create a standardized "
+    "research-support score for the Higher-Order Construct."
+)
+
+dimension_score_table = pd.DataFrame(
+    dimension_scores
+)
+
+if not dimension_score_table.empty:
+
+    standardized_dimensions = (
+        dimension_score_table -
+        dimension_score_table.mean()
+    ) / dimension_score_table.std(
+        ddof=0
+    )
+
+    hoc_score = standardized_dimensions.mean(
+        axis=1
+    )
+
+    st.session_state[
+        "pls_higher_order_score"
+    ] = hoc_score
+
+    st.metric(
+        "Mean HOC Score",
+        round(
+            hoc_score.mean(),
+            3
+        )
+    )
+
+    st.metric(
+        "HOC Score SD",
+        round(
+            hoc_score.std(),
+            3
+        )
+    )
+
+    score_preview = pd.DataFrame(
+        {
+            "Dimension":
+                standardized_dimensions.columns,
+            "Mean Standardized Score":
+                standardized_dimensions.mean().values
+        }
+    )
+
+    st.dataframe(
+        score_preview.round(3),
+        use_container_width=True,
+        hide_index=True
+    )
+
+# ============================================================
+# GRAPHICAL MEASUREMENT MODEL
+# ============================================================
+
+st.divider()
+
+st.header(
+    "📊 Graphical Measurement Model"
+)
+
+st.info(
+    "This visualization is a SmartPLS-inspired research figure. "
+    "It represents the measurement hierarchy and is not claimed "
+    "to be an exact SmartPLS graphical reproduction."
+)
+
+# ------------------------------------------------------------
+# Build graphical coordinates
+# ------------------------------------------------------------
+
+dimension_names = list(
+    dimensions.keys()
+)
+
+fig = go.Figure()
+
+hoc_x = 0.5
+hoc_y = 1.0
+
+dimension_y = 0.60
+indicator_y = 0.20
+
+if len(dimension_names) == 1:
+
+    dimension_x = [0.5]
+
+else:
+
+    dimension_x = [
+        0.12 +
+        (
+            0.76 *
+            i /
+            (len(dimension_names) - 1)
+        )
+        for i in range(
+            len(dimension_names)
+        )
+    ]
+
+indicator_positions = {}
+
+for i, dimension_name in enumerate(
+    dimension_names
+):
+
+    items = dimensions[
+        dimension_name
+    ].get(
+        "items",
+        []
+    )
+
+    dx = dimension_x[i]
+
+    if len(items) == 1:
+
+        positions = [dx]
 
     else:
 
-        st.info(
-            "The dimensions are treated as forming the "
-            "higher-order construct."
+        spread = min(
+            0.22,
+            0.06 * len(items)
         )
+
+        start = dx - spread / 2
+        end = dx + spread / 2
+
+        positions = [
+            start +
+            (
+                (end - start) *
+                j /
+                (len(items) - 1)
+            )
+            for j in range(
+                len(items)
+            )
+        ]
+
+    for item, position in zip(
+        items,
+        positions
+    ):
+
+        indicator_positions[
+            item
+        ] = position
+
+# ------------------------------------------------------------
+# HOC -> Dimension arrows
+# ------------------------------------------------------------
+
+for i, dimension_name in enumerate(
+    dimension_names
+):
+
+    fig.add_annotation(
+        x=dimension_x[i],
+        y=dimension_y + 0.05,
+        ax=hoc_x,
+        ay=hoc_y - 0.05,
+        xref="x",
+        yref="y",
+        axref="x",
+        ayref="y",
+        showarrow=True,
+        arrowhead=2,
+        arrowsize=1,
+        arrowwidth=1.5,
+        text=""
+    )
+
+# ------------------------------------------------------------
+# Dimension -> Indicator arrows
+# ------------------------------------------------------------
+
+for i, dimension_name in enumerate(
+    dimension_names
+):
+
+    dx = dimension_x[i]
+
+    for item in dimensions[
+        dimension_name
+    ].get(
+        "items",
+        []
+    ):
+
+        fig.add_annotation(
+            x=indicator_positions[item],
+            y=indicator_y + 0.04,
+            ax=dx,
+            ay=dimension_y - 0.05,
+            xref="x",
+            yref="y",
+            axref="x",
+            ayref="y",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            arrowwidth=1.2,
+            text=""
+        )
+
+# ------------------------------------------------------------
+# HOC
+# ------------------------------------------------------------
+
+fig.add_trace(
+    go.Scatter(
+        x=[hoc_x],
+        y=[hoc_y],
+        mode="markers+text",
+        marker=dict(
+            size=75,
+            symbol="circle",
+            line=dict(
+                width=2
+            )
+        ),
+        text=[
+            f"<b>{hoc_name}</b><br>{hoc_type}"
+        ],
+        textposition="middle center",
+        showlegend=False,
+        hoverinfo="text"
+    )
+)
+
+# ------------------------------------------------------------
+# Dimensions
+# ------------------------------------------------------------
+
+fig.add_trace(
+    go.Scatter(
+        x=dimension_x,
+        y=[
+            dimension_y
+            for _ in dimension_names
+        ],
+        mode="markers+text",
+        marker=dict(
+            size=60,
+            symbol="square",
+            line=dict(
+                width=2
+            )
+        ),
+        text=[
+            f"<b>{name}</b>"
+            for name in dimension_names
+        ],
+        textposition="middle center",
+        showlegend=False,
+        hoverinfo="text"
+    )
+)
+
+# ------------------------------------------------------------
+# Indicators
+# ------------------------------------------------------------
+
+all_items = []
+all_x = []
+
+for dimension_name in dimension_names:
+
+    for item in dimensions[
+        dimension_name
+    ].get(
+        "items",
+        []
+    ):
+
+        all_items.append(
+            item
+        )
+
+        all_x.append(
+            indicator_positions[item]
+        )
+
+fig.add_trace(
+    go.Scatter(
+        x=all_x,
+        y=[
+            indicator_y
+            for _ in all_items
+        ],
+        mode="markers+text",
+        marker=dict(
+            size=38,
+            symbol="circle",
+            line=dict(
+                width=1.5
+            )
+        ),
+        text=[
+            f"<b>{item}</b>"
+            for item in all_items
+        ],
+        textposition="bottom center",
+        showlegend=False,
+        hoverinfo="text"
+    )
+)
+
+fig.update_layout(
+    height=max(
+        600,
+        500 +
+        len(all_items) * 8
+    ),
+    margin=dict(
+        l=40,
+        r=40,
+        t=70,
+        b=50
+    ),
+    title={
+        "text":
+            "Higher-Order Measurement Model",
+        "x": 0.5
+    },
+    xaxis=dict(
+        visible=False,
+        range=[0, 1]
+    ),
+    yaxis=dict(
+        visible=False,
+        range=[0, 1.12]
+    ),
+    plot_bgcolor="white",
+    paper_bgcolor="white"
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ============================================================
+# MEASUREMENT MODEL STATUS
+# ============================================================
+
+st.divider()
+
+st.header(
+    "🔎 Measurement Model Status"
+)
+
+status_messages = []
+
+for _, row in measurement_df.iterrows():
+
+    dimension_name = row[
+        "Dimension"
+    ]
+
+    measurement_type = row[
+        "Type"
+    ]
+
+    if measurement_type == "Reflective":
+
+        alpha = row[
+            "Cronbach Alpha"
+        ]
+
+        cr = row[
+            "Composite Reliability"
+        ]
+
+        ave = row[
+            "AVE"
+        ]
+
+        if (
+            pd.notna(alpha)
+            and pd.notna(cr)
+            and pd.notna(ave)
+        ):
+
+            if (
+                alpha >= 0.70
+                and cr >= 0.70
+                and ave >= 0.50
+            ):
+
+                status_messages.append(
+                    (
+                        dimension_name,
+                        "Pass",
+                        "Reliability and convergent validity indicators "
+                        "are within commonly used guideline ranges."
+                    )
+                )
+
+            else:
+
+                status_messages.append(
+                    (
+                        dimension_name,
+                        "Review",
+                        "One or more reliability/convergent validity "
+                        "statistics require researcher review."
+                    )
+                )
+
+    else:
+
+        status_messages.append(
+            (
+                dimension_name,
+                "Review",
+                "Formative dimension should be evaluated primarily "
+                "using collinearity and substantive/theoretical relevance."
+            )
+        )
+
+for dimension_name, status, message in status_messages:
+
+    if status == "Pass":
+
+        st.success(
+            f"✅ **{dimension_name}** — {message}"
+        )
+
+    else:
 
         st.warning(
-            "For a formative higher-order construct, "
-            "Cronbach's Alpha, Composite Reliability, and "
-            "AVE are not used as the primary validity criteria."
+            f"⚠️ **{dimension_name}** — {message}"
         )
-
-        st.write(
-            "The formative HOC requires additional assessment "
-            "such as collinearity and significance/relevance "
-            "of formative relationships."
-        )
-
 
 # ============================================================
 # RESEARCHER DECISION
@@ -743,144 +1706,108 @@ else:
 
 st.divider()
 
-st.subheader(
-    "📝 Researcher Decision"
+st.header(
+    "🧑‍🔬 Researcher Measurement Decision"
 )
 
 st.write(
-    "Statistical results should support the researcher's "
-    "theoretical decision. The software will not automatically "
-    "remove indicators."
+    "Statistical indicators support researcher judgment; "
+    "they do not automatically determine whether an indicator "
+    "should be retained or removed."
 )
-
 
 decision_options = [
     "Pending Review",
-    "Retain",
-    "Consider Removal",
-    "Remove",
-    "Keep for Theoretical Reason"
+    "Accept Measurement Model",
+    "Review Indicators",
+    "Revise Measurement Model"
 ]
 
+current_decision = st.session_state.get(
+    "higher_order_measurement_decision",
+    "Pending Review"
+)
 
-decision_rows = []
-
-
-for dimension_name, information in dimensions.items():
-
-    items = information.get(
-        "items",
-        []
+decision = st.selectbox(
+    "Researcher Decision",
+    decision_options,
+    index=decision_options.index(
+        current_decision
     )
+)
 
-    for item in items:
-
-        decision = st.selectbox(
-            f"{dimension_name} → {item}",
-            decision_options,
-            key=(
-                "ho_decision_"
-                + dimension_name
-                + "_"
-                + item
-            )
-        )
-
-        decision_rows.append(
-            {
-                "Dimension": dimension_name,
-                "Indicator": item,
-                "Decision": decision
-            }
-        )
-
+researcher_notes = st.text_area(
+    "Researcher Notes",
+    value=st.session_state.get(
+        "higher_order_measurement_notes",
+        ""
+    ),
+    placeholder=(
+        "Enter methodological notes, theoretical justification, "
+        "indicator decisions, or reasons for retaining/reviewing items."
+    )
+)
 
 if st.button(
-    "💾 Save Measurement Decisions",
+    "💾 Save Measurement Model Decision",
     type="primary"
 ):
 
     st.session_state[
-        "higher_order_measurement_decisions"
-    ] = decision_rows
+        "higher_order_measurement_decision"
+    ] = decision
+
+    st.session_state[
+        "higher_order_measurement_notes"
+    ] = researcher_notes
 
     st.success(
-        "✅ Measurement decisions saved successfully."
+        "✅ Measurement model decision saved."
     )
 
-
 # ============================================================
-# STATUS
+# FINAL SUMMARY
 # ============================================================
 
 st.divider()
 
-st.subheader(
-    "🔎 Measurement Model Status"
+st.header(
+    "📋 Higher-Order Measurement Model Summary"
 )
 
-st.success(
-    "✅ Higher-Order Construct: "
-    + str(hoc_name)
-)
+summary_col1, summary_col2 = st.columns(2)
 
-st.success(
-    "✅ Higher-Order Type: "
-    + str(hoc_type)
-)
+with summary_col1:
 
-st.success(
-    "✅ Dimensions evaluated: "
-    + str(len(dimensions))
-)
-
-
-for dimension_name, information in dimensions.items():
-
-    items = information.get(
-        "items",
-        []
+    st.write(
+        f"**Higher-Order Construct:** {hoc_name}"
     )
 
-    dimension_type = information.get(
-        "type",
-        "Reflective"
+    st.write(
+        f"**HOC Measurement Type:** {hoc_type}"
     )
 
-    if dimension_type == "Reflective":
+    st.write(
+        f"**Number of Dimensions:** {len(dimensions)}"
+    )
 
-        if len(items) >= 3:
+    st.write(
+        f"**Total Indicators:** {total_indicators}"
+    )
 
-            st.success(
-                f"✅ {dimension_name}: "
-                f"{len(items)} reflective indicators."
-            )
+with summary_col2:
 
-        else:
+    st.write(
+        f"**Researcher Decision:** "
+        f"{st.session_state.get(
+            'higher_order_measurement_decision',
+            'Pending Review'
+        )}"
+    )
 
-            st.warning(
-                f"⚠️ {dimension_name}: "
-                f"{len(items)} reflective indicators. "
-                "Review the specification."
-            )
-
-    else:
-
-        if len(items) >= 2:
-
-            st.success(
-                f"✅ {dimension_name}: "
-                f"{len(items)} formative indicators."
-            )
-
-        else:
-
-            st.warning(
-                f"⚠️ {dimension_name}: "
-                f"{len(items)} formative indicator(s). "
-                "Review the specification."
-            )
-
+    st.write(
+        "**Next Step:** Higher-Order Structural Model"
+    )
 
 # ============================================================
 # METHODOLOGICAL NOTE
@@ -888,24 +1815,11 @@ for dimension_name, information in dimensions.items():
 
 st.divider()
 
-st.subheader(
-    "📚 Methodological Note"
-)
-
 st.info(
-    "This page provides research-support diagnostics for the "
-    "higher-order measurement model. Reflective and formative "
-    "measurement models require different assessment procedures."
-)
-
-st.warning(
-    "⚠️ The loading calculations provided here are simplified "
-    "PLS-style diagnostics. They should not be described as an "
-    "exact reproduction of SmartPLS."
-)
-
-st.warning(
-    "⚠️ Measurement decisions remain theory-driven. The "
-    "software does not automatically delete indicators or "
-    "declare a construct valid or invalid."
+    "📌 Methodological note: This page provides a "
+    "research-support PLS-SEM-style measurement assessment. "
+    "The calculations are designed to support academic analysis "
+    "but should not be described as an exact reproduction of "
+    "SmartPLS. Measurement specification and final indicator "
+    "decisions remain the responsibility of the researcher."
 )
