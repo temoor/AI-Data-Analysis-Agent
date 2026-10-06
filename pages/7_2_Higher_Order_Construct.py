@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import re
 
+
 # ============================================================
 # PAGE CONFIG
 # ============================================================
@@ -14,11 +15,13 @@ st.set_page_config(
 )
 
 st.title("🏗️ Higher-Order Construct")
+
 st.write(
     "Define and confirm a hierarchical PLS-SEM measurement structure "
     "in which a Higher-Order Construct (HOC) contains multiple dimensions, "
     "and each dimension is measured by questionnaire indicators."
 )
+
 
 # ============================================================
 # CHECK DATASET
@@ -31,6 +34,7 @@ if "df" not in st.session_state:
     st.stop()
 
 df = st.session_state["df"].copy()
+
 
 # ============================================================
 # NUMERIC QUESTIONNAIRE ITEMS
@@ -45,6 +49,7 @@ if not numeric_columns:
         "❌ No numeric questionnaire indicators were detected."
     )
     st.stop()
+
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -69,11 +74,12 @@ def normalize_name(value):
 def clean_structure_dataframe(structure_df):
     """
     Clean the PLS-SEM structure sheet.
+
     Expected columns:
-    Higher_Order_Construct
-    Dimension
-    Measurement_Type
-    Indicator
+        Higher_Order_Construct
+        Dimension
+        Measurement_Type
+        Indicator
     """
 
     if structure_df is None or structure_df.empty:
@@ -81,16 +87,23 @@ def clean_structure_dataframe(structure_df):
 
     structure_df = structure_df.copy()
 
+    # --------------------------------------------------------
     # Clean column names
+    # --------------------------------------------------------
+
     structure_df.columns = [
         clean_text(col)
         for col in structure_df.columns
     ]
 
+    # --------------------------------------------------------
     # Allow common alternative column names
+    # --------------------------------------------------------
+
     rename_map = {}
 
     for col in structure_df.columns:
+
         normalized = normalize_name(col)
 
         if normalized in [
@@ -153,16 +166,12 @@ def clean_structure_dataframe(structure_df):
         )
 
     structure_df = structure_df[
-        (
-            structure_df["Higher_Order_Construct"] != ""
-        )
-        & (
-            structure_df["Dimension"] != ""
-        )
-        & (
-            structure_df["Indicator"] != ""
-        )
-    ]
+        (structure_df["Higher_Order_Construct"] != "")
+        &
+        (structure_df["Dimension"] != "")
+        &
+        (structure_df["Indicator"] != "")
+    ].copy()
 
     if structure_df.empty:
         return None
@@ -201,16 +210,8 @@ def structure_from_excel():
 
 def structure_from_existing_constructs():
     """
-    Convert the existing simple PLS-SEM construct
-    structure into dimensions.
-
-    Existing structure:
-        Construct -> Indicators
-
-    Converted structure:
-        Higher-Order Construct
-             -> Construct/Dimension
-                  -> Indicators
+    Convert existing simple PLS-SEM constructs into
+    a fallback higher-order structure.
     """
 
     constructs = st.session_state.get(
@@ -267,10 +268,18 @@ def structure_from_existing_constructs():
 def build_model_from_structure(structure_df):
     """
     Convert structure dataframe into:
-    HOC -> Dimensions -> Indicators
+
+        HOC
+          ↓
+        Dimensions
+          ↓
+        Indicators
     """
 
     model = {}
+
+    if structure_df is None or structure_df.empty:
+        return model
 
     for _, row in structure_df.iterrows():
 
@@ -294,6 +303,7 @@ def build_model_from_structure(structure_df):
             continue
 
         if hoc not in model:
+
             model[hoc] = {
                 "dimensions": {},
                 "hoc_type": "Reflective"
@@ -315,78 +325,73 @@ def build_model_from_structure(structure_df):
     return model
 
 
-def validate_structure(model):
+def validate_single_hoc(
+    hoc_name,
+    hoc_information,
+    dataset
+):
     """
-    Validate the hierarchical model.
+    Validate one Higher-Order Construct.
     """
 
     errors = []
     warnings = []
 
-    if not model:
+    dimensions = hoc_information.get(
+        "dimensions",
+        {}
+    )
+
+    if not dimensions:
+
         errors.append(
-            "No higher-order construct structure was found."
+            f"'{hoc_name}' has no dimensions."
         )
+
         return errors, warnings
 
-    all_items = []
+    if len(dimensions) < 2:
 
-    for hoc_name, hoc_information in model.items():
-
-        dimensions = hoc_information.get(
-            "dimensions",
-            {}
+        warnings.append(
+            f"'{hoc_name}' currently has only one dimension. "
+            "A higher-order construct normally requires multiple dimensions."
         )
 
-        if not dimensions:
-            errors.append(
-                f"'{hoc_name}' has no dimensions."
-            )
-            continue
-
-        if len(dimensions) < 2:
-            warnings.append(
-                f"'{hoc_name}' currently has only one dimension. "
-                "A higher-order construct normally requires multiple dimensions."
-            )
-
-        for dimension_name, dimension_information in dimensions.items():
-
-            items = dimension_information.get(
-                "items",
-                []
-            )
-
-            if not items:
-                errors.append(
-                    f"Dimension '{dimension_name}' has no indicators."
-                )
-
-            for item in items:
-
-                if item not in df.columns:
-                    errors.append(
-                        f"Indicator '{item}' is not present in the uploaded dataset."
-                    )
-
-                all_items.append(
-                    (
-                        item,
-                        dimension_name
-                    )
-                )
-
-    # Duplicate indicator check
     indicator_locations = {}
 
-    for item, dimension_name in all_items:
+    for dimension_name, dimension_information in dimensions.items():
 
-        if item not in indicator_locations:
-            indicator_locations[item] = []
-
-        indicator_locations[item].append(
-            dimension_name
+        items = dimension_information.get(
+            "items",
+            []
         )
+
+        if not items:
+
+            errors.append(
+                f"Dimension '{dimension_name}' has no indicators."
+            )
+
+        for item in items:
+
+            if item not in dataset.columns:
+
+                errors.append(
+                    f"Indicator '{item}' is not present "
+                    "in the uploaded dataset."
+                )
+
+            if item not in indicator_locations:
+
+                indicator_locations[item] = []
+
+            indicator_locations[item].append(
+                dimension_name
+            )
+
+    # --------------------------------------------------------
+    # Duplicate indicator check
+    # --------------------------------------------------------
 
     for item, locations in indicator_locations.items():
 
@@ -395,12 +400,60 @@ def validate_structure(model):
         )
 
         if len(unique_locations) > 1:
+
             errors.append(
-                f"Indicator '{item}' is assigned to multiple dimensions: "
+                f"Indicator '{item}' is assigned to multiple "
+                "dimensions: "
                 + ", ".join(unique_locations)
             )
 
     return errors, warnings
+
+
+def validate_all_hocs(
+    model,
+    dataset
+):
+    """
+    Validate all detected HOCs.
+    """
+
+    all_errors = {}
+    all_warnings = {}
+
+    for hoc_name, hoc_information in model.items():
+
+        errors, warnings = validate_single_hoc(
+            hoc_name,
+            hoc_information,
+            dataset
+        )
+
+        all_errors[hoc_name] = errors
+        all_warnings[hoc_name] = warnings
+
+    return all_errors, all_warnings
+
+
+def count_indicators(hoc_information):
+    """
+    Count indicators within one HOC.
+    """
+
+    dimensions = hoc_information.get(
+        "dimensions",
+        {}
+    )
+
+    return sum(
+        len(
+            information.get(
+                "items",
+                []
+            )
+        )
+        for information in dimensions.values()
+    )
 
 
 def make_hoc_figure(
@@ -425,6 +478,9 @@ def make_hoc_figure(
         dimensions.keys()
     )
 
+    if not dimension_names:
+        return fig
+
     # --------------------------------------------------------
     # Coordinates
     # --------------------------------------------------------
@@ -435,13 +491,25 @@ def make_hoc_figure(
     dimension_y = 0.62
     indicator_y = 0.20
 
-    # Spread dimensions horizontally
+    # --------------------------------------------------------
+    # Dimension positions
+    # --------------------------------------------------------
+
     if len(dimension_names) == 1:
+
         dimension_positions = [0.5]
+
     else:
+
         dimension_positions = [
-            0.12 + (
-                0.76 * i / (len(dimension_names) - 1)
+            0.08
+            +
+            (
+                0.84
+                *
+                i
+                /
+                (len(dimension_names) - 1)
             )
             for i in range(
                 len(dimension_names)
@@ -474,16 +542,21 @@ def make_hoc_figure(
         else:
 
             spread = min(
-                0.22,
-                0.06 * len(items)
+                0.25,
+                0.055 * len(items)
             )
 
             start = dim_x - spread / 2
             end = dim_x + spread / 2
 
             positions = [
-                start + (
-                    (end - start) * j /
+                start
+                +
+                (
+                    (end - start)
+                    *
+                    j
+                    /
                     (len(items) - 1)
                 )
                 for j in range(
@@ -501,7 +574,7 @@ def make_hoc_figure(
             ] = x_position
 
     # --------------------------------------------------------
-    # Edges: HOC -> Dimensions
+    # HOC → Dimensions
     # --------------------------------------------------------
 
     for i, dimension_name in enumerate(
@@ -527,7 +600,7 @@ def make_hoc_figure(
         )
 
     # --------------------------------------------------------
-    # Edges: Dimensions -> Indicators
+    # Dimensions → Indicators
     # --------------------------------------------------------
 
     for i, dimension_name in enumerate(
@@ -582,8 +655,7 @@ def make_hoc_figure(
                 )
             ),
             text=[
-                f"<b>{hoc_name}</b><br>"
-                f"{hoc_type}"
+                f"<b>{hoc_name}</b><br>{hoc_type}"
             ],
             textposition="middle center",
             hoverinfo="text",
@@ -691,8 +763,12 @@ def make_hoc_figure(
 
     figure_height = max(
         600,
-        480 + (
-            len(all_indicator_names) * 8
+        480
+        +
+        (
+            len(all_indicator_names)
+            *
+            8
         )
     )
 
@@ -725,6 +801,44 @@ def make_hoc_figure(
     return fig
 
 
+def make_model_table(
+    hoc_name,
+    hoc_information
+):
+    """
+    Create a table for one HOC.
+    """
+
+    rows = []
+
+    for dimension_name, information in hoc_information[
+        "dimensions"
+    ].items():
+
+        for item in information.get(
+            "items",
+            []
+        ):
+
+            rows.append(
+                {
+                    "Higher-Order Construct":
+                        hoc_name,
+                    "Dimension":
+                        dimension_name,
+                    "Measurement Type":
+                        information.get(
+                            "type",
+                            "Reflective"
+                        ),
+                    "Indicator":
+                        item
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
 # ============================================================
 # DATASET INFORMATION
 # ============================================================
@@ -734,22 +848,26 @@ st.divider()
 col1, col2, col3 = st.columns(3)
 
 with col1:
+
     st.metric(
         "Respondents",
         df.shape[0]
     )
 
 with col2:
+
     st.metric(
         "Variables",
         df.shape[1]
     )
 
 with col3:
+
     st.metric(
         "Numeric Items",
         len(numeric_columns)
     )
+
 
 # ============================================================
 # DETECT MODEL STRUCTURE
@@ -757,7 +875,9 @@ with col3:
 
 st.divider()
 
-st.subheader("🔍 Model Structure Detection")
+st.subheader(
+    "🔍 Model Structure Detection"
+)
 
 excel_structure = structure_from_excel()
 
@@ -778,6 +898,7 @@ elif existing_construct_structure is not None:
     detected_structure = existing_construct_structure
     detected_source = "Existing PLS-SEM Constructs"
 
+
 # ============================================================
 # AUTOMATIC DETECTION
 # ============================================================
@@ -796,14 +917,100 @@ if detected_structure is not None:
         )
 
         st.info(
-            "The software has detected a possible hierarchical "
-            "measurement structure. Please review and confirm it "
-            "before using it for PLS-SEM analysis."
+            "The software has detected the hierarchical "
+            "measurement structure. Review and confirm "
+            "the HOCs before using them for PLS-SEM analysis."
         )
 
         # ----------------------------------------------------
-        # HOC SELECTION
+        # OVERALL DETECTION SUMMARY
         # ----------------------------------------------------
+
+        st.subheader(
+            "📊 Detected Higher-Order Constructs"
+        )
+
+        summary_rows = []
+
+        for hoc_name, hoc_information in detected_model.items():
+
+            summary_rows.append(
+                {
+                    "Higher-Order Construct":
+                        hoc_name,
+                    "Dimensions":
+                        len(
+                            hoc_information[
+                                "dimensions"
+                            ]
+                        ),
+                    "Indicators":
+                        count_indicators(
+                            hoc_information
+                        )
+                }
+            )
+
+        summary_df = pd.DataFrame(
+            summary_rows
+        )
+
+        st.dataframe(
+            summary_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.success(
+            f"✅ Total Higher-Order Constructs Detected: "
+            f"{len(detected_model)}"
+        )
+
+        # ----------------------------------------------------
+        # VALIDATE ALL DETECTED HOCS
+        # ----------------------------------------------------
+
+        all_errors, all_warnings = validate_all_hocs(
+            detected_model,
+            df
+        )
+
+        total_errors = sum(
+            len(errors)
+            for errors in all_errors.values()
+        )
+
+        if total_errors == 0:
+
+            st.success(
+                "✅ All detected Higher-Order Constructs "
+                "passed basic structural validation."
+            )
+
+        else:
+
+            st.error(
+                f"❌ {total_errors} structural issue(s) "
+                "were detected."
+            )
+
+            for hoc_name, errors in all_errors.items():
+
+                for error in errors:
+
+                    st.write(
+                        f"• **{hoc_name}:** {error}"
+                    )
+
+        # ----------------------------------------------------
+        # SELECT HOC TO REVIEW
+        # ----------------------------------------------------
+
+        st.divider()
+
+        st.subheader(
+            "🔎 Review Higher-Order Construct"
+        )
 
         hoc_names = list(
             detected_model.keys()
@@ -827,22 +1034,36 @@ if detected_structure is not None:
         # HOC TYPE
         # ----------------------------------------------------
 
-        existing_saved_model = st.session_state.get(
+        saved_models = st.session_state.get(
+            "pls_higher_order_models",
+            {}
+        )
+
+        old_saved_model = st.session_state.get(
             "pls_higher_order_model"
         )
 
         default_hoc_type = "Reflective"
 
         if (
-            isinstance(
-                existing_saved_model,
-                dict
+            isinstance(saved_models, dict)
+            and selected_hoc in saved_models
+        ):
+
+            default_hoc_type = saved_models[
+                selected_hoc
+            ].get(
+                "type",
+                "Reflective"
             )
-            and existing_saved_model.get("name")
+
+        elif (
+            isinstance(old_saved_model, dict)
+            and old_saved_model.get("name")
             == selected_hoc
         ):
 
-            default_hoc_type = existing_saved_model.get(
+            default_hoc_type = old_saved_model.get(
                 "type",
                 "Reflective"
             )
@@ -858,7 +1079,7 @@ if detected_structure is not None:
                 if default_hoc_type == "Reflective"
                 else 1
             ),
-            key="detected_hoc_type"
+            key=f"detected_hoc_type_{selected_hoc}"
         )
 
         # ----------------------------------------------------
@@ -909,37 +1130,37 @@ if detected_structure is not None:
         )
 
         # ----------------------------------------------------
-        # VALIDATE DETECTED MODEL
+        # SELECTED HOC VALIDATION
         # ----------------------------------------------------
 
-        validation_model = {
-            selected_hoc: {
-                "dimensions": dimensions
-            }
-        }
-
-        errors, warnings = validate_structure(
-            validation_model
+        selected_errors, selected_warnings = (
+            validate_single_hoc(
+                selected_hoc,
+                selected_information,
+                df
+            )
         )
 
-        if errors:
+        if selected_errors:
 
             st.error(
                 "❌ Please correct the following issues:"
             )
 
-            for error in errors:
+            for error in selected_errors:
+
                 st.write(
                     f"• {error}"
                 )
 
-        if warnings:
+        if selected_warnings:
 
             st.warning(
                 "⚠️ Please review:"
             )
 
-            for warning in warnings:
+            for warning in selected_warnings:
+
                 st.write(
                     f"• {warning}"
                 )
@@ -961,38 +1182,167 @@ if detected_structure is not None:
             "that the dimensions and indicators are theoretically correct."
         )
 
-        confirm_model = st.checkbox(
-            "I confirm that the detected Higher-Order Construct, "
-            "dimensions, indicators, and measurement specification "
-            "are theoretically correct.",
-            key="confirm_detected_hoc"
+        confirm_selected = st.checkbox(
+            "I confirm that this Higher-Order Construct, "
+            "its dimensions, indicators, and measurement "
+            "specification are theoretically correct.",
+            key=f"confirm_hoc_{selected_hoc}"
         )
 
+        # ----------------------------------------------------
+        # SAVE SELECTED HOC
+        # ----------------------------------------------------
+
         if st.button(
-            "💾 Save Confirmed Higher-Order Model",
+            "💾 Save This Confirmed Higher-Order Construct",
             type="primary",
             disabled=(
-                not confirm_model
-                or bool(errors)
+                not confirm_selected
+                or bool(selected_errors)
             ),
-            key="save_detected_hoc"
+            key=f"save_hoc_{selected_hoc}"
         ):
 
-            higher_order_model = {
-                "name": selected_hoc,
-                "type": hoc_type,
-                "dimensions": dimensions
+            current_models = st.session_state.get(
+                "pls_higher_order_models",
+                {}
+            )
+
+            if not isinstance(
+                current_models,
+                dict
+            ):
+
+                current_models = {}
+
+            current_models = current_models.copy()
+
+            current_models[
+                selected_hoc
+            ] = {
+                "name":
+                    selected_hoc,
+                "type":
+                    hoc_type,
+                "dimensions":
+                    dimensions
             }
+
+            # ------------------------------------------------
+            # Save all confirmed HOCs
+            # ------------------------------------------------
+
+            st.session_state[
+                "pls_higher_order_models"
+            ] = current_models
+
+            # ------------------------------------------------
+            # Backward compatibility:
+            # Keep the selected HOC in the old key.
+            # Existing Measurement Model page uses this.
+            # ------------------------------------------------
 
             st.session_state[
                 "pls_higher_order_model"
-            ] = higher_order_model
+            ] = {
+                "name":
+                    selected_hoc,
+                "type":
+                    hoc_type,
+                "dimensions":
+                    dimensions
+            }
 
             st.success(
-                "✅ Higher-Order Construct model saved successfully."
+                f"✅ {selected_hoc} saved successfully."
             )
 
             st.rerun()
+
+        # ----------------------------------------------------
+        # SAVE ALL DETECTED HOCS
+        # ----------------------------------------------------
+
+        st.divider()
+
+        st.subheader(
+            "💾 Save All Higher-Order Constructs"
+        )
+
+        st.info(
+            "Use this option only after reviewing the complete "
+            "Excel structure and confirming that all detected "
+            "Higher-Order Constructs are theoretically correct."
+        )
+
+        confirm_all = st.checkbox(
+            "I confirm that all detected Higher-Order Constructs, "
+            "dimensions, indicators, and measurement specifications "
+            "are theoretically correct.",
+            key="confirm_all_hocs"
+        )
+
+        if st.button(
+            "💾 Save All Confirmed Higher-Order Constructs",
+            type="secondary",
+            disabled=(
+                not confirm_all
+                or total_errors > 0
+            ),
+            key="save_all_hocs"
+        ):
+
+            all_models = {}
+
+            for hoc_name, hoc_information in detected_model.items():
+
+                # Preserve researcher-selected HOC type
+                existing = saved_models.get(
+                    hoc_name,
+                    {}
+                )
+
+                existing_type = existing.get(
+                    "type",
+                    "Reflective"
+                )
+
+                all_models[
+                    hoc_name
+                ] = {
+                    "name":
+                        hoc_name,
+                    "type":
+                        existing_type,
+                    "dimensions":
+                        hoc_information[
+                            "dimensions"
+                        ]
+                }
+
+            st.session_state[
+                "pls_higher_order_models"
+            ] = all_models
+
+            # ------------------------------------------------
+            # Keep selected HOC for existing pages
+            # ------------------------------------------------
+
+            selected_model = all_models[
+                selected_hoc
+            ]
+
+            st.session_state[
+                "pls_higher_order_model"
+            ] = selected_model
+
+            st.success(
+                f"✅ All {len(all_models)} Higher-Order "
+                "Constructs were saved successfully."
+            )
+
+            st.rerun()
+
 
 # ============================================================
 # MANUAL FALLBACK
@@ -1002,7 +1352,7 @@ else:
 
     st.warning(
         "⚠️ No Excel PLS-SEM dimension structure was detected. "
-        "Manual higher-order model setup is available."
+        "Manual Higher-Order Construct setup is available."
     )
 
     st.info(
@@ -1091,8 +1441,10 @@ else:
             dimensions[
                 dimension_name.strip()
             ] = {
-                "items": selected_items,
-                "type": dimension_type
+                "items":
+                    selected_items,
+                "type":
+                    dimension_type
             }
 
     # --------------------------------------------------------
@@ -1112,6 +1464,7 @@ else:
             st.error(
                 "❌ Please enter a Higher-Order Construct name."
             )
+
             st.stop()
 
         if not dimensions:
@@ -1119,6 +1472,7 @@ else:
             st.error(
                 "❌ Please define at least one dimension."
             )
+
             st.stop()
 
         empty_dimensions = []
@@ -1173,8 +1527,8 @@ else:
         if duplicate_items:
 
             st.error(
-                "❌ The same questionnaire indicator has been "
-                "assigned to more than one dimension."
+                "❌ The same questionnaire indicator has "
+                "been assigned to more than one dimension."
             )
 
             for (
@@ -1191,19 +1545,48 @@ else:
 
             st.stop()
 
-        # ----------------------------------------------------
-        # SAVE
-        # ----------------------------------------------------
-
         higher_order_model = {
-            "name": hoc_name.strip(),
-            "type": hoc_type,
-            "dimensions": dimensions
+            "name":
+                hoc_name.strip(),
+            "type":
+                hoc_type,
+            "dimensions":
+                dimensions
         }
+
+        # ----------------------------------------------------
+        # Save legacy single-model key
+        # ----------------------------------------------------
 
         st.session_state[
             "pls_higher_order_model"
         ] = higher_order_model
+
+        # ----------------------------------------------------
+        # Save multi-HOC key
+        # ----------------------------------------------------
+
+        existing_models = st.session_state.get(
+            "pls_higher_order_models",
+            {}
+        )
+
+        if not isinstance(
+            existing_models,
+            dict
+        ):
+
+            existing_models = {}
+
+        existing_models = existing_models.copy()
+
+        existing_models[
+            hoc_name.strip()
+        ] = higher_order_model
+
+        st.session_state[
+            "pls_higher_order_models"
+        ] = existing_models
 
         st.success(
             "✅ Higher-Order Construct model saved successfully."
@@ -1211,74 +1594,129 @@ else:
 
         st.rerun()
 
+
 # ============================================================
-# DISPLAY SAVED MODEL
+# DISPLAY SAVED MODELS
 # ============================================================
 
-if "pls_higher_order_model" in st.session_state:
+saved_models = st.session_state.get(
+    "pls_higher_order_models",
+    {}
+)
 
-    saved_model = st.session_state[
-        "pls_higher_order_model"
-    ]
+if isinstance(
+    saved_models,
+    dict
+) and saved_models:
 
     st.divider()
 
     st.subheader(
-        "🌳 Confirmed Higher-Order Model"
+        "🌳 Confirmed Higher-Order Models"
+    )
+
+    summary_rows = []
+
+    for hoc_name, model in saved_models.items():
+
+        summary_rows.append(
+            {
+                "Higher-Order Construct":
+                    hoc_name,
+                "Measurement Type":
+                    model.get(
+                        "type",
+                        "Reflective"
+                    ),
+                "Dimensions":
+                    len(
+                        model.get(
+                            "dimensions",
+                            {}
+                        )
+                    ),
+                "Indicators":
+                    count_indicators(
+                        model
+                    )
+            }
+        )
+
+    st.dataframe(
+        pd.DataFrame(summary_rows),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.success(
+        f"✅ {len(saved_models)} Higher-Order "
+        "Construct(s) currently saved."
+    )
+
+
+# ============================================================
+# DISPLAY CURRENT / SELECTED MODEL
+# ============================================================
+
+current_model = st.session_state.get(
+    "pls_higher_order_model"
+)
+
+if isinstance(
+    current_model,
+    dict
+):
+
+    current_name = current_model.get(
+        "name",
+        "Higher-Order Construct"
+    )
+
+    current_type = current_model.get(
+        "type",
+        "Reflective"
+    )
+
+    current_dimensions = current_model.get(
+        "dimensions",
+        {}
+    )
+
+    st.divider()
+
+    st.subheader(
+        "🌳 Current Higher-Order Model"
     )
 
     st.success(
         f"✅ Higher-Order Construct: "
-        f"**{saved_model['name']}**"
+        f"**{current_name}**"
     )
 
     st.write(
-        f"Measurement Type: "
-        f"**{saved_model['type']}**"
+        f"Measurement Type: **{current_type}**"
     )
 
     # --------------------------------------------------------
     # MODEL TABLE
     # --------------------------------------------------------
 
-    model_rows = []
+    model_table = make_model_table(
+        current_name,
+        current_model
+    )
 
-    for dimension_name, information in saved_model[
-        "dimensions"
-    ].items():
-
-        for item in information.get(
-            "items",
-            []
-        ):
-
-            model_rows.append(
-                {
-                    "Higher-Order Construct":
-                        saved_model["name"],
-                    "Dimension":
-                        dimension_name,
-                    "Measurement Type":
-                        information.get(
-                            "type",
-                            "Reflective"
-                        ),
-                    "Indicator":
-                        item
-                }
-            )
-
-    if model_rows:
+    if not model_table.empty:
 
         st.dataframe(
-            pd.DataFrame(model_rows),
+            model_table,
             use_container_width=True,
             hide_index=True
         )
 
-    # ========================================================
+    # --------------------------------------------------------
     # MODEL TREE
-    # ========================================================
+    # --------------------------------------------------------
 
     st.divider()
 
@@ -1287,17 +1725,15 @@ if "pls_higher_order_model" in st.session_state:
     )
 
     st.markdown(
-        f"### 🟢 {saved_model['name']}"
+        f"### 🟢 {current_name}"
     )
 
     st.caption(
         f"Higher-Order Measurement Type: "
-        f"{saved_model['type']}"
+        f"{current_type}"
     )
 
-    for dimension_name, information in saved_model[
-        "dimensions"
-    ].items():
+    for dimension_name, information in current_dimensions.items():
 
         st.markdown(
             f"**⬜ {dimension_name}** "
@@ -1314,9 +1750,9 @@ if "pls_higher_order_model" in st.session_state:
                 unsafe_allow_html=True
             )
 
-    # ========================================================
-    # GRAPHICAL HIGHER-ORDER MODEL
-    # ========================================================
+    # --------------------------------------------------------
+    # GRAPHICAL MODEL
+    # --------------------------------------------------------
 
     st.divider()
 
@@ -1331,9 +1767,9 @@ if "pls_higher_order_model" in st.session_state:
     )
 
     figure = make_hoc_figure(
-        saved_model["name"],
-        saved_model["type"],
-        saved_model["dimensions"]
+        current_name,
+        current_type,
+        current_dimensions
     )
 
     st.plotly_chart(
@@ -1341,9 +1777,9 @@ if "pls_higher_order_model" in st.session_state:
         use_container_width=True
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # INDICATOR INFORMATION
-    # ========================================================
+    # --------------------------------------------------------
 
     st.divider()
 
@@ -1353,9 +1789,7 @@ if "pls_higher_order_model" in st.session_state:
 
     indicator_rows = []
 
-    for dimension_name, information in saved_model[
-        "dimensions"
-    ].items():
+    for dimension_name, information in current_dimensions.items():
 
         for item in information.get(
             "items",
@@ -1377,9 +1811,13 @@ if "pls_higher_order_model" in st.session_state:
                     "Indicator":
                         item,
                     "Valid Responses":
-                        int(series.notna().sum()),
+                        int(
+                            series.notna().sum()
+                        ),
                     "Missing":
-                        int(series.isna().sum()),
+                        int(
+                            series.isna().sum()
+                        ),
                     "Mean":
                         round(
                             series.mean(),
@@ -1406,14 +1844,16 @@ if "pls_higher_order_model" in st.session_state:
     if indicator_rows:
 
         st.dataframe(
-            pd.DataFrame(indicator_rows),
+            pd.DataFrame(
+                indicator_rows
+            ),
             use_container_width=True,
             hide_index=True
         )
 
-    # ========================================================
+    # --------------------------------------------------------
     # MODEL STATUS
-    # ========================================================
+    # --------------------------------------------------------
 
     st.divider()
 
@@ -1421,24 +1861,21 @@ if "pls_higher_order_model" in st.session_state:
         "🔎 Higher-Order Model Status"
     )
 
-    validation_model = {
-        saved_model["name"]: {
-            "dimensions":
-                saved_model["dimensions"]
-        }
-    }
-
-    errors, warnings = validate_structure(
-        validation_model
+    current_errors, current_warnings = (
+        validate_single_hoc(
+            current_name,
+            current_model,
+            df
+        )
     )
 
-    if errors:
+    if current_errors:
 
         st.error(
             "❌ Model requires attention."
         )
 
-        for error in errors:
+        for error in current_errors:
 
             st.write(
                 f"• {error}"
@@ -1448,24 +1885,16 @@ if "pls_higher_order_model" in st.session_state:
 
         st.success(
             f"✅ Higher-Order Construct: "
-            f"{saved_model['name']}"
+            f"{current_name}"
         )
 
         st.success(
             f"✅ Number of Dimensions: "
-            f"{len(saved_model['dimensions'])}"
+            f"{len(current_dimensions)}"
         )
 
-        total_indicators = sum(
-            len(
-                information.get(
-                    "items",
-                    []
-                )
-            )
-            for information in saved_model[
-                "dimensions"
-            ].values()
+        total_indicators = count_indicators(
+            current_model
         )
 
         st.success(
@@ -1473,31 +1902,32 @@ if "pls_higher_order_model" in st.session_state:
             f"{total_indicators}"
         )
 
-    if warnings:
+    if current_warnings:
 
         st.warning(
             "⚠️ Researcher Review"
         )
 
-        for warning in warnings:
+        for warning in current_warnings:
 
             st.write(
                 f"• {warning}"
             )
 
-    # ========================================================
-    # METHODOLOGICAL NOTE
-    # ========================================================
 
-    st.divider()
+# ============================================================
+# METHODOLOGICAL NOTE
+# ============================================================
 
-    st.info(
-        "📌 Methodological note: A higher-order construct is "
-        "a theory-driven hierarchical measurement structure. "
-        "The software does not determine whether the HOC or "
-        "its dimensions should be reflective or formative. "
-        "These measurement specifications must be justified "
-        "by the researcher's theoretical framework and research design. "
-        "Statistical assessment is performed in the subsequent "
-        "Higher-Order Measurement Model page."
-    )
+st.divider()
+
+st.info(
+    "📌 Methodological note: A higher-order construct is "
+    "a theory-driven hierarchical measurement structure. "
+    "The software does not determine whether the HOC or "
+    "its dimensions should be reflective or formative. "
+    "These measurement specifications must be justified "
+    "by the researcher's theoretical framework and research design. "
+    "Statistical assessment is performed in the subsequent "
+    "Higher-Order Measurement Model page."
+)
