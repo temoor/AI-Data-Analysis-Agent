@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 # ============================================================
 # PAGE CONFIG
@@ -24,12 +27,11 @@ st.write(
 
 st.info(
     "This page is a research-support PLS-SEM-style implementation. "
-    "It is designed to provide transparent statistical diagnostics "
-    "and should not be described as an exact reproduction of SmartPLS."
+    "It should not be described as an exact reproduction of SmartPLS."
 )
 
 # ============================================================
-# CHECK DATA
+# CHECK REQUIRED DATA
 # ============================================================
 
 if "df" not in st.session_state:
@@ -40,22 +42,16 @@ if "df" not in st.session_state:
 
 df = st.session_state["df"].copy()
 
-# ============================================================
-# CHECK HIGHER-ORDER MODEL
-# ============================================================
-
 if "pls_higher_order_model" not in st.session_state:
     st.warning(
         "⚠️ No Higher-Order Construct model was found."
     )
     st.info(
-        "Please complete 7_2 Higher-Order Construct first."
+        "Please complete 2 Higher Order Construct first."
     )
     st.stop()
 
-higher_order_model = st.session_state[
-    "pls_higher_order_model"
-]
+higher_order_model = st.session_state["pls_higher_order_model"]
 
 hoc_name = higher_order_model.get(
     "name",
@@ -72,20 +68,13 @@ dimensions = higher_order_model.get(
     {}
 )
 
-# ============================================================
-# CHECK STRUCTURAL MODEL
-# ============================================================
-
 if "pls_higher_order_structural_model" not in st.session_state:
-
     st.warning(
         "⚠️ No Higher-Order Structural Model was found."
     )
-
     st.info(
-        "Please complete 8_1 Higher-Order Structural Model first."
+        "Please complete 1 Higher Order Structural Model first."
     )
-
     st.stop()
 
 structural_model = st.session_state[
@@ -98,47 +87,21 @@ paths = structural_model.get(
 )
 
 if not paths:
-
     st.error(
         "❌ No structural paths have been defined."
     )
     st.stop()
 
 # ============================================================
-# BASIC INFORMATION
-# ============================================================
-
-st.divider()
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric(
-        "Respondents",
-        df.shape[0]
-    )
-
-with col2:
-    st.metric(
-        "Higher-Order Construct",
-        hoc_name
-    )
-
-with col3:
-    st.metric(
-        "Dimensions",
-        len(dimensions)
-    )
-
-with col4:
-    st.metric(
-        "Structural Paths",
-        len(paths)
-    )
-
-# ============================================================
 # HELPER FUNCTIONS
 # ============================================================
+
+def numeric_series(series):
+    return pd.to_numeric(
+        series,
+        errors="coerce"
+    )
+
 
 def numeric_dataframe(data, columns):
     return data[
@@ -150,29 +113,27 @@ def numeric_dataframe(data, columns):
 
 
 def standardize_series(series):
-    series = pd.to_numeric(
-        series,
-        errors="coerce"
-    )
+    series = numeric_series(series)
 
     std = series.std(
         ddof=0
     )
 
     if pd.isna(std) or std == 0:
-        return series * 0
+        return pd.Series(
+            0.0,
+            index=series.index
+        )
 
     return (
-        series -
-        series.mean()
+        series - series.mean()
     ) / std
 
 
-def create_dimension_scores(data, model_dimensions):
-    """
-    Create mean composite scores for each dimension.
-    """
-
+def create_dimension_scores(
+    data,
+    model_dimensions
+):
     scores = {}
 
     for dimension_name, information in model_dimensions.items():
@@ -196,13 +157,11 @@ def create_dimension_scores(data, model_dimensions):
             valid_items
         )
 
-        score = item_data.mean(
-            axis=1
-        )
-
         scores[
             dimension_name
-        ] = score
+        ] = item_data.mean(
+            axis=1
+        )
 
     return pd.DataFrame(
         scores,
@@ -210,15 +169,13 @@ def create_dimension_scores(data, model_dimensions):
     )
 
 
-def create_hoc_score(dimension_scores):
-    """
-    Create HOC score as the standardized mean of dimension scores.
-    """
-
+def create_hoc_score(
+    dimension_scores
+):
     if dimension_scores.empty:
         return pd.Series(
-            index=dimension_scores.index,
-            dtype=float
+            np.nan,
+            index=df.index
         )
 
     standardized = pd.DataFrame(
@@ -241,32 +198,24 @@ def create_hoc_score(dimension_scores):
 def create_construct_scores(
     data,
     higher_order_name,
-    dimensions,
+    model_dimensions,
     existing_constructs=None
 ):
-    """
-    Create scores for all constructs required by the
-    structural model.
-
-    Priority:
-    1. Higher-Order Construct score
-    2. Existing simple PLS constructs
-    3. Dimension scores
-    """
-
     scores = {}
 
     dimension_scores = create_dimension_scores(
         data,
-        dimensions
+        model_dimensions
     )
 
-    # HOC score
-    scores[
-        higher_order_name
-    ] = create_hoc_score(
-        dimension_scores
-    )
+    # Higher-Order Construct score
+    if not dimension_scores.empty:
+
+        scores[
+            higher_order_name
+        ] = create_hoc_score(
+            dimension_scores
+        )
 
     # Existing simple constructs
     if isinstance(
@@ -307,7 +256,7 @@ def create_construct_scores(
                 axis=1
             )
 
-    # Add dimensions
+    # Dimension scores
     for dimension_name in dimension_scores.columns:
 
         scores[
@@ -322,66 +271,32 @@ def create_construct_scores(
     )
 
 
-def standardized_regression(
-    y,
-    x
-):
-    """
-    Simple standardized regression coefficient.
-    """
-
-    data = pd.concat(
-        [
-            y.rename("y"),
-            x.rename("x")
-        ],
-        axis=1
-    ).dropna()
-
-    if len(data) < 3:
-        return np.nan
-
-    y_values = standardize_series(
-        data["y"]
-    )
-
-    x_values = standardize_series(
-        data["x"]
-    )
-
-    denominator = np.sum(
-        x_values ** 2
-    )
-
-    if denominator == 0:
-        return np.nan
-
-    beta = np.sum(
-        x_values *
-        y_values
-    ) / denominator
-
-    return beta
-
-
 def multiple_regression(
     y,
     X
 ):
-    """
-    Multiple linear regression using numpy.
-    Returns standardized path coefficients and R².
-    """
-
     combined = pd.concat(
         [
-            y.rename("target"),
-            X
+            numeric_series(
+                y
+            ).rename(
+                "target"
+            ),
+            X.apply(
+                pd.to_numeric,
+                errors="coerce"
+            )
         ],
         axis=1
+    ).replace(
+        [np.inf, -np.inf],
+        np.nan
     ).dropna()
 
-    if len(combined) < 5:
+    if (
+        len(combined) < 5
+        or X.shape[1] == 0
+    ):
         return None
 
     target = combined[
@@ -400,27 +315,22 @@ def multiple_regression(
         standardize_series
     )
 
-    matrix = predictors_std.values
-
     matrix = np.column_stack(
         [
             np.ones(
-                len(matrix)
+                len(predictors_std)
             ),
-            matrix
+            predictors_std.to_numpy()
         ]
     )
 
     try:
-
         coefficients = np.linalg.lstsq(
             matrix,
-            target_std.values,
+            target_std.to_numpy(),
             rcond=None
         )[0]
-
     except Exception:
-
         return None
 
     predicted = (
@@ -428,8 +338,8 @@ def multiple_regression(
     )
 
     residuals = (
-        target_std.values -
-        predicted
+        target_std.to_numpy()
+        - predicted
     )
 
     ss_res = np.sum(
@@ -438,32 +348,22 @@ def multiple_regression(
 
     ss_tot = np.sum(
         (
-            target_std.values -
-            np.mean(
-                target_std.values
-            )
+            target_std.to_numpy()
+            - target_std.mean()
         ) ** 2
     )
 
     if ss_tot == 0:
-
         r_squared = np.nan
-
     else:
-
         r_squared = (
-            1 -
-            ss_res /
-            ss_tot
+            1
+            - ss_res / ss_tot
         )
-
-    beta_values = coefficients[
-        1:
-    ]
 
     return {
         "betas": pd.Series(
-            beta_values,
+            coefficients[1:],
             index=predictors.columns
         ),
         "r2": r_squared,
@@ -471,27 +371,88 @@ def multiple_regression(
     }
 
 
+def regression_pvalue(
+    y,
+    x
+):
+    data = pd.concat(
+        [
+            numeric_series(
+                y
+            ).rename("y"),
+            numeric_series(
+                x
+            ).rename("x")
+        ],
+        axis=1
+    ).dropna()
+
+    n = len(data)
+
+    if n < 4:
+        return np.nan
+
+    y_std = standardize_series(
+        data["y"]
+    )
+
+    x_std = standardize_series(
+        data["x"]
+    )
+
+    denominator = np.sum(
+        x_std ** 2
+    )
+
+    if denominator == 0:
+        return np.nan
+
+    beta = np.sum(
+        x_std * y_std
+    ) / denominator
+
+    residual = (
+        y_std
+        - beta * x_std
+    )
+
+    sse = np.sum(
+        residual ** 2
+    )
+
+    mse = (
+        sse / (n - 2)
+    )
+
+    se = np.sqrt(
+        mse / denominator
+    )
+
+    if (
+        se == 0
+        or not np.isfinite(se)
+    ):
+        return np.nan
+
+    t_value = beta / se
+
+    return (
+        2
+        * stats.t.sf(
+            abs(t_value),
+            df=n - 2
+        )
+    )
+
+
 def calculate_f2(
     y,
     predictors,
     target_predictor
 ):
-    """
-    f² = (R² included - R² excluded) /
-         (1 - R² included)
-    """
-
-    full_predictors = list(
-        predictors
-    )
-
-    full_X = predictors[
-        full_predictors
-    ]
-
     full_model = multiple_regression(
         y,
-        full_X
+        predictors
     )
 
     if full_model is None:
@@ -503,7 +464,7 @@ def calculate_f2(
 
     reduced_predictors = [
         predictor
-        for predictor in full_predictors
+        for predictor in predictors.columns
         if predictor != target_predictor
     ]
 
@@ -524,256 +485,294 @@ def calculate_f2(
         ]
 
     else:
-
         excluded_r2 = 0.0
 
     denominator = (
-        1 -
-        included_r2
+        1 - included_r2
     )
 
     if denominator == 0:
         return np.nan
 
     return (
-        included_r2 -
-        excluded_r2
+        included_r2
+        - excluded_r2
     ) / denominator
 
 
-def regression_pvalue(
-    y,
-    x
-):
-    """
-    p-value for a simple standardized regression coefficient.
-    """
-
-    data = pd.concat(
-        [
-            y.rename("y"),
-            x.rename("x")
-        ],
-        axis=1
-    ).dropna()
-
-    n = len(data)
-
-    if n < 4:
-        return np.nan
-
-    beta = standardized_regression(
-        data["y"],
-        data["x"]
-    )
-
-    if pd.isna(beta):
-        return np.nan
-
-    residual = (
-        standardize_series(
-            data["y"]
-        )
-        -
-        beta *
-        standardize_series(
-            data["x"]
-        )
-    )
-
-    sse = np.sum(
-        residual ** 2
-    )
-
-    x_values = standardize_series(
-        data["x"]
-    )
-
-    sxx = np.sum(
-        x_values ** 2
-    )
-
-    if sxx == 0:
-        return np.nan
-
-    mse = (
-        sse /
-        (n - 2)
-    )
-
-    se = np.sqrt(
-        mse /
-        sxx
-    )
-
-    if se == 0:
-        return np.nan
-
-    t_value = beta / se
-
-    p_value = (
-        2 *
-        stats.t.sf(
-            abs(t_value),
-            df=n - 2
-        )
-    )
-
-    return p_value
-
+# ============================================================
+# FIXED Q² FUNCTION
+# ============================================================
 
 def calculate_q2_style(
-    data,
     target,
     predictors,
     folds=10
 ):
     """
-    Cross-validated Q²-style diagnostic.
+    Cross-validated Q²-style predictive relevance diagnostic.
 
-    This is a research-support predictive relevance
-    implementation and not an exact SmartPLS blindfolding
-    algorithm.
+    This is a research-support implementation.
+    It is NOT an exact SmartPLS blindfolding algorithm.
+
+    IMPORTANT:
+    Q² is calculated independently of bootstrapping.
+    The user does NOT need to click Run Bootstrapping first.
     """
 
-    combined = pd.concat(
-        [
-            target.rename("target"),
-            predictors
-        ],
-        axis=1
-    ).dropna()
+    try:
 
-    if len(combined) < 20:
-        return np.nan
-
-    actual = combined[
-        "target"
-    ].values
-
-    predicted = np.zeros(
-        len(combined)
-    )
-
-    fold_indices = np.array_split(
-        np.arange(
-            len(combined)
-        ),
-        min(
-            folds,
-            len(combined)
+        predictor_names = list(
+            predictors.columns
         )
-    )
 
-    for test_indices in fold_indices:
+        if not predictor_names:
+            return np.nan
 
-        train_indices = np.array(
+        combined = pd.concat(
             [
-                i
-                for i in range(
-                    len(combined)
+                numeric_series(
+                    target
+                ).rename(
+                    "target"
+                ),
+                predictors[
+                    predictor_names
+                ].apply(
+                    pd.to_numeric,
+                    errors="coerce"
                 )
-                if i not in set(
-                    test_indices
-                )
-            ]
+            ],
+            axis=1
         )
 
-        if len(train_indices) < 5:
-            continue
-
-        train_y = combined.iloc[
-            train_indices
-        ]["target"]
-
-        train_X = combined.iloc[
-            train_indices
-        ][predictors.columns]
-
-        test_X = combined.iloc[
-            test_indices
-        ][predictors.columns]
-
-        model = multiple_regression(
-            train_y,
-            train_X
-        )
-
-        if model is None:
-            continue
-
-        train_mean = train_y.mean()
-        train_std = train_y.std(
-            ddof=0
-        )
-
-        if train_std == 0:
-            continue
-
-        test_X_std = (
-            test_X -
-            train_X.mean()
-        ) / train_X.std(
-            ddof=0
-        )
-
-        test_X_std = test_X_std.replace(
+        combined = combined.replace(
             [np.inf, -np.inf],
             np.nan
-        ).fillna(0)
+        ).dropna()
 
-        matrix = np.column_stack(
-            [
-                np.ones(
-                    len(test_X_std)
-                ),
-                test_X_std.values
+        if len(combined) < 20:
+            return np.nan
+
+        n = len(combined)
+
+        actual = combined[
+            "target"
+        ].to_numpy(
+            dtype=float
+        )
+
+        predicted = np.full(
+            n,
+            np.nan,
+            dtype=float
+        )
+
+        number_of_folds = min(
+            max(
+                int(folds),
+                2
+            ),
+            n
+        )
+
+        fold_indices = np.array_split(
+            np.arange(n),
+            number_of_folds
+        )
+
+        for test_indices in fold_indices:
+
+            if len(test_indices) == 0:
+                continue
+
+            train_mask = np.ones(
+                n,
+                dtype=bool
+            )
+
+            train_mask[
+                test_indices
+            ] = False
+
+            train_indices = np.where(
+                train_mask
+            )[0]
+
+            if len(train_indices) < 5:
+                continue
+
+            train = combined.iloc[
+                train_indices
             ]
-        )
 
-        coefficients = np.concatenate(
-            [
-                [0],
-                model["betas"].values
+            test = combined.iloc[
+                test_indices
             ]
-        )
 
-        predicted_values = (
-            matrix @ coefficients
-        )
+            train_y = train[
+                "target"
+            ]
 
-        predicted_values = (
-            predicted_values *
-            train_std
-        ) + train_mean
+            train_x = train[
+                predictor_names
+            ]
 
-        predicted[
-            test_indices
-        ] = predicted_values
+            test_x = test[
+                predictor_names
+            ]
 
-    sse = np.sum(
-        (
-            actual -
+            # Training-fold parameters
+            y_mean = float(
+                train_y.mean()
+            )
+
+            y_std = float(
+                train_y.std(
+                    ddof=0
+                )
+            )
+
+            if (
+                not np.isfinite(y_std)
+                or y_std <= 0
+            ):
+                continue
+
+            x_mean = train_x.mean()
+
+            x_std = train_x.std(
+                ddof=0
+            )
+
+            safe_x_std = x_std.where(
+                np.isfinite(x_std)
+                & (x_std > 0),
+                1.0
+            )
+
+            train_x_std = (
+                train_x
+                - x_mean
+            ) / safe_x_std
+
+            test_x_std = (
+                test_x
+                - x_mean
+            ) / safe_x_std
+
+            train_y_std = (
+                train_y
+                - y_mean
+            ) / y_std
+
+            train_matrix = np.column_stack(
+                [
+                    np.ones(
+                        len(train_x_std)
+                    ),
+                    train_x_std.to_numpy(
+                        dtype=float
+                    )
+                ]
+            )
+
+            try:
+                coefficients = np.linalg.lstsq(
+                    train_matrix,
+                    train_y_std.to_numpy(
+                        dtype=float
+                    ),
+                    rcond=None
+                )[0]
+
+            except Exception:
+                continue
+
+            test_matrix = np.column_stack(
+                [
+                    np.ones(
+                        len(test_x_std)
+                    ),
+                    test_x_std.to_numpy(
+                        dtype=float
+                    )
+                ]
+            )
+
+            predicted_std = (
+                test_matrix
+                @ coefficients
+            )
+
+            predicted_values = (
+                predicted_std
+                * y_std
+            ) + y_mean
+
+            if np.all(
+                np.isfinite(
+                    predicted_values
+                )
+            ):
+
+                predicted[
+                    test_indices
+                ] = predicted_values
+
+        valid = np.isfinite(
             predicted
-        ) ** 2
-    )
+        )
 
-    sso = np.sum(
-        (
-            actual -
-            np.mean(actual)
-        ) ** 2
-    )
+        if valid.sum() < 5:
+            return np.nan
 
-    if sso == 0:
+        actual_valid = actual[
+            valid
+        ]
+
+        predicted_valid = predicted[
+            valid
+        ]
+
+        sse = np.sum(
+            (
+                actual_valid
+                - predicted_valid
+            ) ** 2
+        )
+
+        sso = np.sum(
+            (
+                actual_valid
+                - actual_valid.mean()
+            ) ** 2
+        )
+
+        if (
+            not np.isfinite(sso)
+            or sso <= 0
+        ):
+            return np.nan
+
+        q2 = (
+            1
+            - sse / sso
+        )
+
+        if not np.isfinite(q2):
+            return np.nan
+
+        return float(q2)
+
+    except Exception:
+        # Never crash the Results page because of Q².
         return np.nan
 
-    return (
-        1 -
-        sse /
-        sso
-    )
 
+# ============================================================
+# BOOTSTRAP FUNCTION
+# ============================================================
 
 def bootstrap_paths(
     scores,
@@ -781,9 +780,6 @@ def bootstrap_paths(
     iterations,
     random_seed
 ):
-    """
-    Bootstrap structural path coefficients.
-    """
 
     rng = np.random.default_rng(
         random_seed
@@ -815,7 +811,6 @@ def bootstrap_paths(
             drop=True
         )
 
-        # Find each endogenous outcome
         outcomes = list(
             dict.fromkeys(
                 path["outcome"]
@@ -834,13 +829,15 @@ def bootstrap_paths(
             predictors = [
                 path["predictor"]
                 for path in relevant_paths
-                if path["predictor"] in sample.columns
+                if path["predictor"]
+                in sample.columns
             ]
 
-            if outcome not in sample.columns:
-                continue
-
-            if not predictors:
+            if (
+                outcome
+                not in sample.columns
+                or not predictors
+            ):
                 continue
 
             model = multiple_regression(
@@ -858,28 +855,62 @@ def bootstrap_paths(
                     outcome
                 )
 
-                if key in bootstrap_results:
+                beta = model[
+                    "betas"
+                ].get(
+                    predictor,
+                    np.nan
+                )
 
-                    beta = model[
-                        "betas"
-                    ].get(
-                        predictor,
-                        np.nan
+                if (
+                    key in bootstrap_results
+                    and pd.notna(beta)
+                ):
+
+                    bootstrap_results[
+                        key
+                    ].append(
+                        float(beta)
                     )
-
-                    if pd.notna(beta):
-
-                        bootstrap_results[
-                            key
-                        ].append(
-                            beta
-                        )
 
     return bootstrap_results
 
 
 # ============================================================
-# CREATE CONSTRUCT SCORES
+# BASIC INFORMATION
+# ============================================================
+
+st.divider()
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric(
+        "Respondents",
+        df.shape[0]
+    )
+
+with col2:
+    st.metric(
+        "Higher-Order Construct",
+        hoc_name
+    )
+
+with col3:
+    st.metric(
+        "Dimensions",
+        len(dimensions)
+    )
+
+with col4:
+    st.metric(
+        "Structural Paths",
+        len(paths)
+    )
+
+
+# ============================================================
+# CONSTRUCT SCORE PREPARATION
 # ============================================================
 
 st.divider()
@@ -900,7 +931,6 @@ construct_scores = create_construct_scores(
     existing_constructs
 )
 
-# Keep only constructs actually needed by paths
 required_constructs = set()
 
 for path in paths:
@@ -916,18 +946,18 @@ for path in paths:
 missing_constructs = [
     construct
     for construct in required_constructs
-    if construct not in construct_scores.columns
+    if construct
+    not in construct_scores.columns
 ]
 
 if missing_constructs:
 
     st.error(
-        "❌ The following structural constructs could not "
-        "be calculated from the current model:"
+        "❌ The following structural constructs "
+        "could not be calculated:"
     )
 
     for construct in missing_constructs:
-
         st.write(
             f"• {construct}"
         )
@@ -938,17 +968,20 @@ st.success(
     "✅ Construct scores prepared successfully."
 )
 
-score_preview = construct_scores[
-    list(required_constructs)
-].head(10)
-
 st.dataframe(
-    score_preview.round(3),
+    construct_scores[
+        list(required_constructs)
+    ].head(
+        10
+    ).round(
+        3
+    ),
     use_container_width=True
 )
 
+
 # ============================================================
-# STRUCTURAL PATH RESULTS
+# PATH COEFFICIENTS
 # ============================================================
 
 st.divider()
@@ -957,7 +990,6 @@ st.header(
     "🔗 Path Coefficients"
 )
 
-# Group paths by outcome
 paths_by_outcome = {}
 
 for path in paths:
@@ -966,15 +998,10 @@ for path in paths:
         "outcome"
     ]
 
-    if outcome not in paths_by_outcome:
-
-        paths_by_outcome[
-            outcome
-        ] = []
-
-    paths_by_outcome[
-        outcome
-    ].append(
+    paths_by_outcome.setdefault(
+        outcome,
+        []
+    ).append(
         path
     )
 
@@ -989,15 +1016,15 @@ for outcome, outcome_paths in paths_by_outcome.items():
     predictors = [
         path["predictor"]
         for path in outcome_paths
+        if path["predictor"]
+        in construct_scores.columns
     ]
 
-    predictors = [
-        predictor
-        for predictor in predictors
-        if predictor in construct_scores.columns
-    ]
-
-    if outcome not in construct_scores.columns:
+    if (
+        outcome
+        not in construct_scores.columns
+        or not predictors
+    ):
         continue
 
     model = multiple_regression(
@@ -1010,13 +1037,11 @@ for outcome, outcome_paths in paths_by_outcome.items():
     if model is None:
         continue
 
-    r2 = model[
-        "r2"
-    ]
-
     r_squared_results[
         outcome
-    ] = r2
+    ] = model[
+        "r2"
+    ]
 
     for path in outcome_paths:
 
@@ -1036,24 +1061,29 @@ for outcome, outcome_paths in paths_by_outcome.items():
             construct_scores[predictor]
         )
 
-        n = model[
-            "n"
-        ]
+        if pd.isna(beta):
 
-        if pd.notna(beta):
+            direction = (
+                "Not available"
+            )
 
-            if abs(beta) >= 0.30:
-                effect_direction = "Moderate/Strong"
+        elif abs(beta) >= 0.30:
 
-            elif abs(beta) >= 0.10:
-                effect_direction = "Small/Moderate"
+            direction = (
+                "Moderate/Strong"
+            )
 
-            else:
-                effect_direction = "Weak"
+        elif abs(beta) >= 0.10:
+
+            direction = (
+                "Small/Moderate"
+            )
 
         else:
 
-            effect_direction = "Not available"
+            direction = (
+                "Weak"
+            )
 
         path_results.append(
             {
@@ -1068,15 +1098,11 @@ for outcome, outcome_paths in paths_by_outcome.items():
                 "p-value":
                     p_value,
                 "N":
-                    n,
+                    model["n"],
                 "Direction":
-                    effect_direction
+                    direction
             }
         )
-
-# ============================================================
-# DISPLAY PATH RESULTS
-# ============================================================
 
 path_results_df = pd.DataFrame(
     path_results
@@ -1090,23 +1116,32 @@ if path_results_df.empty:
 
     st.stop()
 
-path_results_df[
-    "Path Coefficient (β)"
-] = path_results_df[
-    "Path Coefficient (β)"
-].round(4)
+path_results_display = (
+    path_results_df.copy()
+)
 
-path_results_df[
+path_results_display[
+    "Path Coefficient (β)"
+] = path_results_display[
+    "Path Coefficient (β)"
+].round(
+    4
+)
+
+path_results_display[
     "p-value"
-] = path_results_df[
+] = path_results_display[
     "p-value"
-].round(6)
+].round(
+    6
+)
 
 st.dataframe(
-    path_results_df,
+    path_results_display,
     use_container_width=True,
     hide_index=True
 )
+
 
 # ============================================================
 # R-SQUARED
@@ -1124,23 +1159,33 @@ for outcome, r2 in r_squared_results.items():
 
     if pd.isna(r2):
 
-        interpretation = "Not available"
+        interpretation = (
+            "Not available"
+        )
 
     elif r2 >= 0.75:
 
-        interpretation = "Substantial"
+        interpretation = (
+            "Substantial"
+        )
 
     elif r2 >= 0.50:
 
-        interpretation = "Moderate"
+        interpretation = (
+            "Moderate"
+        )
 
     elif r2 >= 0.25:
 
-        interpretation = "Weak to moderate"
+        interpretation = (
+            "Weak to moderate"
+        )
 
     else:
 
-        interpretation = "Weak"
+        interpretation = (
+            "Weak"
+        )
 
     r2_rows.append(
         {
@@ -1150,7 +1195,9 @@ for outcome, r2 in r_squared_results.items():
                 round(
                     r2,
                     4
-                ),
+                )
+                if pd.notna(r2)
+                else np.nan,
             "Interpretation":
                 interpretation
         }
@@ -1167,9 +1214,10 @@ st.dataframe(
 )
 
 st.caption(
-    "R² represents the proportion of variance in an endogenous "
-    "construct explained by its predictor constructs."
+    "R² represents the proportion of variance in an "
+    "endogenous construct explained by its predictor constructs."
 )
+
 
 # ============================================================
 # F-SQUARED
@@ -1186,15 +1234,15 @@ for outcome, outcome_paths in paths_by_outcome.items():
     predictors = [
         path["predictor"]
         for path in outcome_paths
+        if path["predictor"]
+        in construct_scores.columns
     ]
 
-    predictors = [
-        predictor
-        for predictor in predictors
-        if predictor in construct_scores.columns
-    ]
-
-    if outcome not in construct_scores.columns:
+    if (
+        outcome
+        not in construct_scores.columns
+        or not predictors
+    ):
         continue
 
     for path in outcome_paths:
@@ -1214,23 +1262,33 @@ for outcome, outcome_paths in paths_by_outcome.items():
 
         if pd.isna(f2):
 
-            interpretation = "Not available"
+            interpretation = (
+                "Not available"
+            )
 
         elif f2 >= 0.35:
 
-            interpretation = "Large"
+            interpretation = (
+                "Large"
+            )
 
         elif f2 >= 0.15:
 
-            interpretation = "Medium"
+            interpretation = (
+                "Medium"
+            )
 
         elif f2 >= 0.02:
 
-            interpretation = "Small"
+            interpretation = (
+                "Small"
+            )
 
         else:
 
-            interpretation = "Negligible"
+            interpretation = (
+                "Negligible"
+            )
 
         f_squared_results.append(
             {
@@ -1257,7 +1315,9 @@ if not f2_df.empty:
         "f²"
     ] = f2_df[
         "f²"
-    ].round(4)
+    ].round(
+        4
+    )
 
     st.dataframe(
         f2_df,
@@ -1265,8 +1325,9 @@ if not f2_df.empty:
         hide_index=True
     )
 
+
 # ============================================================
-# BOOTSTRAPPING SETTINGS
+# BOOTSTRAPPING
 # ============================================================
 
 st.divider()
@@ -1316,7 +1377,9 @@ if run_bootstrap:
         "Running bootstrap analysis..."
     ):
 
-        bootstrap_results = bootstrap_paths(
+        st.session_state[
+            "higher_order_bootstrap_results"
+        ] = bootstrap_paths(
             construct_scores,
             paths,
             int(
@@ -1327,20 +1390,22 @@ if run_bootstrap:
             )
         )
 
-    st.session_state[
-        "higher_order_bootstrap_results"
-    ] = bootstrap_results
-
     st.success(
         f"✅ Bootstrapping completed using "
         f"{bootstrap_iterations:,} samples."
     )
 
+
 # ============================================================
 # BOOTSTRAP RESULTS
 # ============================================================
 
-if "higher_order_bootstrap_results" in st.session_state:
+bootstrap_df = pd.DataFrame()
+
+if (
+    "higher_order_bootstrap_results"
+    in st.session_state
+):
 
     st.divider()
 
@@ -1354,17 +1419,17 @@ if "higher_order_bootstrap_results" in st.session_state:
 
     bootstrap_rows = []
 
-    for _, path_row in path_results_df.iterrows():
+    for _, row in path_results_df.iterrows():
 
-        predictor = path_row[
+        predictor = row[
             "Predictor"
         ]
 
-        outcome = path_row[
+        outcome = row[
             "Outcome"
         ]
 
-        beta = path_row[
+        beta = row[
             "Path Coefficient (β)"
         ]
 
@@ -1394,22 +1459,21 @@ if "higher_order_bootstrap_results" in st.session_state:
             if bootstrap_sd > 0:
 
                 t_value = (
-                    beta /
-                    bootstrap_sd
+                    beta
+                    / bootstrap_sd
+                )
+
+                p_value = (
+                    2
+                    * stats.norm.sf(
+                        abs(t_value)
+                    )
                 )
 
             else:
 
                 t_value = np.nan
-
-            p_value = (
-                2 *
-                stats.norm.sf(
-                    abs(t_value)
-                )
-                if pd.notna(t_value)
-                else np.nan
-            )
+                p_value = np.nan
 
             lower_ci = np.percentile(
                 values,
@@ -1433,7 +1497,7 @@ if "higher_order_bootstrap_results" in st.session_state:
         bootstrap_rows.append(
             {
                 "Hypothesis":
-                    path_row["Hypothesis"],
+                    row["Hypothesis"],
                 "Predictor":
                     predictor,
                 "Outcome":
@@ -1473,7 +1537,9 @@ if "higher_order_bootstrap_results" in st.session_state:
         numeric_bootstrap_columns
     ] = bootstrap_df[
         numeric_bootstrap_columns
-    ].round(4)
+    ].round(
+        4
+    )
 
     st.dataframe(
         bootstrap_df,
@@ -1481,14 +1547,21 @@ if "higher_order_bootstrap_results" in st.session_state:
         hide_index=True
     )
 
+
 # ============================================================
-# Q²
+# Q² — PREDICTIVE RELEVANCE
 # ============================================================
 
 st.divider()
 
 st.header(
     "🔮 Q² — Predictive Relevance"
+)
+
+st.caption(
+    "Q² is calculated independently of the Bootstrapping button. "
+    "Bootstrapping is used for path-coefficient uncertainty and "
+    "hypothesis testing; it is not required to calculate Q²."
 )
 
 q2_rows = []
@@ -1498,36 +1571,40 @@ for outcome, outcome_paths in paths_by_outcome.items():
     predictors = [
         path["predictor"]
         for path in outcome_paths
+        if path["predictor"]
+        in construct_scores.columns
     ]
 
-    predictors = [
-        predictor
-        for predictor in predictors
-        if predictor in construct_scores.columns
-    ]
-
-    if not predictors:
+    if (
+        not predictors
+        or outcome
+        not in construct_scores.columns
+    ):
         continue
 
     q2 = calculate_q2_style(
         construct_scores[outcome],
-        construct_scores[
-            predictors
-        ],
+        construct_scores[predictors],
         folds=10
     )
 
     if pd.isna(q2):
 
-        interpretation = "Not available"
+        interpretation = (
+            "Not available"
+        )
 
     elif q2 > 0:
 
-        interpretation = "Predictive relevance indicated"
+        interpretation = (
+            "Predictive relevance indicated"
+        )
 
     else:
 
-        interpretation = "Predictive relevance not indicated"
+        interpretation = (
+            "Predictive relevance not indicated"
+        )
 
     q2_rows.append(
         {
@@ -1550,7 +1627,9 @@ if not q2_df.empty:
         "Q²"
     ] = q2_df[
         "Q²"
-    ].round(4)
+    ].round(
+        4
+    )
 
     st.dataframe(
         q2_df,
@@ -1558,10 +1637,18 @@ if not q2_df.empty:
         hide_index=True
     )
 
+else:
+
+    st.warning(
+        "⚠️ Q² could not be calculated for the current model."
+    )
+
 st.caption(
     "Q² here is a cross-validated predictive-relevance-style "
-    "diagnostic. It is not claimed to reproduce SmartPLS blindfolding exactly."
+    "diagnostic. It is not claimed to reproduce SmartPLS "
+    "blindfolding exactly."
 )
+
 
 # ============================================================
 # HYPOTHESIS TESTING
@@ -1577,48 +1664,36 @@ hypothesis_rows = []
 
 for _, row in path_results_df.iterrows():
 
-    hypothesis = row[
-        "Hypothesis"
-    ]
-
-    predictor = row[
-        "Predictor"
-    ]
-
-    outcome = row[
-        "Outcome"
-    ]
-
-    beta = row[
-        "Path Coefficient (β)"
-    ]
-
     p_value = row[
         "p-value"
     ]
 
-    if pd.isna(
-        p_value
-    ):
+    if pd.isna(p_value):
 
-        decision = "Not available"
+        decision = (
+            "Not available"
+        )
 
     elif p_value < 0.05:
 
-        decision = "Supported"
+        decision = (
+            "Supported"
+        )
 
     else:
 
-        decision = "Not Supported"
+        decision = (
+            "Not Supported"
+        )
 
     hypothesis_rows.append(
         {
             "Hypothesis":
-                hypothesis,
+                row["Hypothesis"],
             "Relationship":
-                f"{predictor} → {outcome}",
+                f"{row['Predictor']} → {row['Outcome']}",
             "β":
-                beta,
+                row["Path Coefficient (β)"],
             "p-value":
                 p_value,
             "Decision":
@@ -1631,10 +1706,13 @@ hypothesis_df = pd.DataFrame(
 )
 
 st.dataframe(
-    hypothesis_df,
+    hypothesis_df.round(
+        4
+    ),
     use_container_width=True,
     hide_index=True
 )
+
 
 # ============================================================
 # GRAPHICAL RESULTS
@@ -1647,8 +1725,9 @@ st.header(
 )
 
 st.info(
-    "The diagram below is a SmartPLS-inspired results visualization. "
-    "Path coefficients are displayed on the structural relationships."
+    "The diagram below is a SmartPLS-inspired results "
+    "visualization. Path coefficients are displayed on "
+    "the structural relationships."
 )
 
 structural_constructs = []
@@ -1667,10 +1746,6 @@ for path in paths:
             path["outcome"]
         )
 
-# ------------------------------------------------------------
-# Position constructs
-# ------------------------------------------------------------
-
 node_positions = {}
 
 number_nodes = len(
@@ -1679,16 +1754,18 @@ number_nodes = len(
 
 if number_nodes == 1:
 
-    x_positions = [0.5]
+    x_positions = [
+        0.5
+    ]
 
 else:
 
     x_positions = [
-        0.10 +
-        (
-            0.80 *
-            i /
-            (number_nodes - 1)
+        0.10
+        + (
+            0.80
+            * i
+            / (number_nodes - 1)
         )
         for i in range(
             number_nodes
@@ -1708,10 +1785,6 @@ for construct, x in zip(
     )
 
 result_fig = go.Figure()
-
-# ------------------------------------------------------------
-# Arrows and coefficients
-# ------------------------------------------------------------
 
 for _, row in path_results_df.iterrows():
 
@@ -1735,13 +1808,19 @@ for _, row in path_results_df.iterrows():
         outcome
     ]
 
-    label = (
-        f"{row['Hypothesis']}<br>"
-        f"β = {beta:.3f}"
-        if pd.notna(beta)
-        else
-        f"{row['Hypothesis']}<br>β = NA"
-    )
+    if pd.notna(beta):
+
+        label = (
+            f"{row['Hypothesis']}<br>"
+            f"β = {beta:.3f}"
+        )
+
+    else:
+
+        label = (
+            f"{row['Hypothesis']}<br>"
+            "β = NA"
+        )
 
     result_fig.add_annotation(
         x=x2,
@@ -1759,10 +1838,6 @@ for _, row in path_results_df.iterrows():
         text=label
     )
 
-# ------------------------------------------------------------
-# Nodes
-# ------------------------------------------------------------
-
 node_text = []
 
 for construct in structural_constructs:
@@ -1771,14 +1846,14 @@ for construct in structural_constructs:
 
         node_text.append(
             f"<b>{construct}</b><br>"
-            f"Higher-Order"
+            "Higher-Order"
         )
 
     elif construct in dimensions:
 
         node_text.append(
             f"<b>{construct}</b><br>"
-            f"Dimension"
+            "Dimension"
         )
 
     else:
@@ -1831,7 +1906,8 @@ result_fig.update_layout(
     title={
         "text":
             "Higher-Order PLS-SEM Structural Results",
-        "x": 0.5
+        "x":
+            0.5
     },
     height=650,
     margin=dict(
@@ -1857,6 +1933,7 @@ st.plotly_chart(
     use_container_width=True
 )
 
+
 # ============================================================
 # RESULTS DASHBOARD
 # ============================================================
@@ -1875,7 +1952,8 @@ with dashboard_col1:
         (
             hypothesis_df[
                 "Decision"
-            ] == "Supported"
+            ]
+            == "Supported"
         ).sum()
     )
 
@@ -1907,17 +1985,14 @@ with dashboard_col3:
 
 with dashboard_col4:
 
-    endogenous_count = len(
-        r_squared_results
-    )
-
     st.metric(
         "Endogenous Constructs",
-        endogenous_count
+        len(r_squared_results)
     )
 
+
 # ============================================================
-# EXPORT TO EXCEL
+# EXCEL EXPORT
 # ============================================================
 
 st.divider()
@@ -1937,28 +2012,15 @@ if st.button(
 
     try:
 
-        import io
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
-
         output = io.BytesIO()
 
         workbook = Workbook()
 
-        # ----------------------------------------------------
-        # Remove default sheet
-        # ----------------------------------------------------
-
-        default_sheet = workbook.active
-
         workbook.remove(
-            default_sheet
+            workbook.active
         )
 
-        # ----------------------------------------------------
         # Summary
-        # ----------------------------------------------------
-
         ws_summary = workbook.create_sheet(
             "Summary"
         )
@@ -1992,23 +2054,16 @@ if st.button(
                 row
             )
 
-        # ----------------------------------------------------
         # Path Results
-        # ----------------------------------------------------
-
         ws_paths = workbook.create_sheet(
             "Path Results"
         )
 
-        for row in [
+        ws_paths.append(
             list(
                 path_results_df.columns
             )
-        ]:
-
-            ws_paths.append(
-                row
-            )
+        )
 
         for row in path_results_df.itertuples(
             index=False,
@@ -2019,10 +2074,7 @@ if st.button(
                 list(row)
             )
 
-        # ----------------------------------------------------
         # R2
-        # ----------------------------------------------------
-
         ws_r2 = workbook.create_sheet(
             "R2"
         )
@@ -2042,10 +2094,7 @@ if st.button(
                 list(row)
             )
 
-        # ----------------------------------------------------
         # F2
-        # ----------------------------------------------------
-
         if not f2_df.empty:
 
             ws_f2 = workbook.create_sheet(
@@ -2067,10 +2116,7 @@ if st.button(
                     list(row)
                 )
 
-        # ----------------------------------------------------
         # Q2
-        # ----------------------------------------------------
-
         if not q2_df.empty:
 
             ws_q2 = workbook.create_sheet(
@@ -2092,10 +2138,7 @@ if st.button(
                     list(row)
                 )
 
-        # ----------------------------------------------------
         # Hypotheses
-        # ----------------------------------------------------
-
         ws_hyp = workbook.create_sheet(
             "Hypotheses"
         )
@@ -2115,49 +2158,29 @@ if st.button(
                 list(row)
             )
 
-        # ----------------------------------------------------
         # Bootstrap
-        # ----------------------------------------------------
+        if not bootstrap_df.empty:
 
-        if "higher_order_bootstrap_results" in st.session_state:
+            ws_boot = workbook.create_sheet(
+                "Bootstrapping"
+            )
 
-            bootstrap_export = []
-
-            for _, row in bootstrap_df.iterrows():
-
-                bootstrap_export.append(
-                    row.to_dict()
+            ws_boot.append(
+                list(
+                    bootstrap_df.columns
                 )
+            )
 
-            if bootstrap_export:
-
-                ws_boot = workbook.create_sheet(
-                    "Bootstrapping"
-                )
-
-                export_df = pd.DataFrame(
-                    bootstrap_export
-                )
+            for row in bootstrap_df.itertuples(
+                index=False,
+                name=None
+            ):
 
                 ws_boot.append(
-                    list(
-                        export_df.columns
-                    )
+                    list(row)
                 )
 
-                for row in export_df.itertuples(
-                    index=False,
-                    name=None
-                ):
-
-                    ws_boot.append(
-                        list(row)
-                    )
-
-        # ----------------------------------------------------
-        # Dimension Structure
-        # ----------------------------------------------------
-
+        # HOC Dimensions
         ws_dimensions = workbook.create_sheet(
             "HOC Dimensions"
         )
@@ -2190,10 +2213,7 @@ if st.button(
                 ]
             )
 
-        # ----------------------------------------------------
         # Formatting
-        # ----------------------------------------------------
-
         for worksheet in workbook.worksheets:
 
             for cell in worksheet[1]:
@@ -2214,18 +2234,16 @@ if st.button(
 
                     try:
 
-                        cell_length = len(
-                            str(
-                                cell.value
+                        max_length = max(
+                            max_length,
+                            len(
+                                str(
+                                    cell.value
+                                )
                             )
                         )
 
-                        if cell_length > max_length:
-
-                            max_length = cell_length
-
                     except Exception:
-
                         pass
 
                 worksheet.column_dimensions[
@@ -2244,7 +2262,10 @@ if st.button(
         )
 
         st.download_button(
-            label="⬇️ Download Higher-Order PLS-SEM Results",
+            label=(
+                "⬇️ Download Higher-Order "
+                "PLS-SEM Results"
+            ),
             data=output,
             file_name=(
                 "Higher_Order_PLS_SEM_Results.xlsx"
@@ -2269,6 +2290,7 @@ if st.button(
         st.exception(
             error
         )
+
 
 # ============================================================
 # FINAL METHODOLOGICAL NOTE
