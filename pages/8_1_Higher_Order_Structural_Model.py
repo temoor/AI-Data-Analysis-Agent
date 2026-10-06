@@ -1,7 +1,7 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+
 
 # ============================================================
 # PAGE CONFIG
@@ -17,15 +17,16 @@ st.title("🏗️ Higher-Order Structural Model")
 
 st.write(
     "Define the structural relationships between Higher-Order "
-    "Constructs and other constructs in the PLS-SEM model."
+    "Constructs and other research constructs in the PLS-SEM model."
 )
 
 st.info(
     "This page is designed for hierarchical PLS-SEM models. "
-    "The Higher-Order Construct and its dimensions are treated "
-    "as a measurement hierarchy, while relationships between "
-    "research constructs are specified as structural paths."
+    "Higher-Order Constructs and their dimensions are treated as "
+    "a measurement hierarchy, while relationships between research "
+    "constructs are specified as structural paths."
 )
+
 
 # ============================================================
 # CHECK DATASET
@@ -39,42 +40,182 @@ if "df" not in st.session_state:
 
     st.stop()
 
-df = st.session_state["df"]
+df = st.session_state["df"].copy()
+
 
 # ============================================================
-# CHECK HIGHER-ORDER MODEL
+# CHECK HIGHER-ORDER MODELS
 # ============================================================
 
-if "pls_higher_order_model" not in st.session_state:
+higher_order_models = st.session_state.get(
+    "pls_higher_order_models"
+)
 
-    st.warning(
-        "⚠️ No Higher-Order Construct model has been saved yet."
+
+# ------------------------------------------------------------
+# Backward compatibility with older single-HOC key
+# ------------------------------------------------------------
+
+if not isinstance(
+    higher_order_models,
+    dict
+) or not higher_order_models:
+
+    old_model = st.session_state.get(
+        "pls_higher_order_model"
     )
 
-    st.info(
-        "Please complete the Higher-Order Construct page first."
+    if isinstance(
+        old_model,
+        dict
+    ):
+
+        old_name = old_model.get(
+            "name",
+            "Higher-Order Construct"
+        )
+
+        higher_order_models = {
+            old_name: old_model
+        }
+
+    else:
+
+        st.warning(
+            "⚠️ No Higher-Order Construct model was found."
+        )
+
+        st.info(
+            "Please complete **2 Higher Order Construct** first."
+        )
+
+        st.stop()
+
+
+# ============================================================
+# CLEAN HOC MODELS
+# ============================================================
+
+clean_hoc_models = {}
+
+for hoc_name, hoc_information in higher_order_models.items():
+
+    if not isinstance(
+        hoc_information,
+        dict
+    ):
+        continue
+
+    dimensions = hoc_information.get(
+        "dimensions",
+        {}
+    )
+
+    if not isinstance(
+        dimensions,
+        dict
+    ):
+        dimensions = {}
+
+    clean_hoc_models[
+        hoc_name
+    ] = {
+        "name":
+            hoc_information.get(
+                "name",
+                hoc_name
+            ),
+        "type":
+            hoc_information.get(
+                "type",
+                "Reflective"
+            ),
+        "dimensions":
+            dimensions
+    }
+
+
+higher_order_models = clean_hoc_models
+
+
+if not higher_order_models:
+
+    st.error(
+        "❌ No valid Higher-Order Constructs are available."
     )
 
     st.stop()
 
-higher_order_model = st.session_state[
-    "pls_higher_order_model"
-]
 
-hoc_name = higher_order_model.get(
-    "name",
-    "Higher-Order Construct"
-)
+# ============================================================
+# SIMPLE / ORDINARY CONSTRUCTS
+# ============================================================
 
-hoc_type = higher_order_model.get(
-    "type",
-    "Reflective"
-)
-
-dimensions = higher_order_model.get(
-    "dimensions",
+simple_constructs = st.session_state.get(
+    "pls_constructs",
     {}
 )
+
+if not isinstance(
+    simple_constructs,
+    dict
+):
+
+    simple_constructs = {}
+
+
+# ============================================================
+# AVAILABLE STRUCTURAL CONSTRUCTS
+# ============================================================
+#
+# IMPORTANT:
+#
+# Only HOCs and ordinary/simple constructs belong here.
+#
+# Dimensions such as V1D1, V1D2, V1D3 are deliberately NOT
+# included because they are measurement components.
+#
+# ============================================================
+
+available_constructs = []
+
+# ------------------------------------------------------------
+# Add all Higher-Order Constructs
+# ------------------------------------------------------------
+
+for hoc_name in higher_order_models.keys():
+
+    if hoc_name not in available_constructs:
+
+        available_constructs.append(
+            hoc_name
+        )
+
+
+# ------------------------------------------------------------
+# Add ordinary/simple constructs
+# ------------------------------------------------------------
+
+for construct_name in simple_constructs.keys():
+
+    if construct_name not in available_constructs:
+
+        available_constructs.append(
+            construct_name
+        )
+
+
+# ------------------------------------------------------------
+# Safety check
+# ------------------------------------------------------------
+
+if len(available_constructs) < 2:
+
+    st.warning(
+        "⚠️ At least two structural constructs are required "
+        "to define a structural path."
+    )
+
 
 # ============================================================
 # BASIC INFORMATION
@@ -85,722 +226,351 @@ st.divider()
 col1, col2, col3 = st.columns(3)
 
 with col1:
+
     st.metric(
         "Respondents",
         df.shape[0]
     )
 
 with col2:
+
     st.metric(
-        "Higher-Order Construct",
-        hoc_name
+        "Higher-Order Constructs",
+        len(higher_order_models)
     )
 
 with col3:
+
     st.metric(
-        "Dimensions",
-        len(dimensions)
+        "Structural Constructs",
+        len(available_constructs)
     )
 
-# ============================================================
-# HIGHER-ORDER MODEL
-# ============================================================
-
-st.divider()
-
-st.header("🏗️ Higher-Order Measurement Hierarchy")
-
-st.write(
-    "The following structure comes from the Higher-Order Construct page."
-)
-
-st.markdown(
-    f"### 🟢 {hoc_name}"
-)
-
-st.caption(
-    f"Higher-Order Measurement Type: {hoc_type}"
-)
-
-for dimension_name, information in dimensions.items():
-
-    dimension_type = information.get(
-        "type",
-        "Reflective"
-    )
-
-    items = information.get(
-        "items",
-        []
-    )
-
-    st.markdown(
-        f"**⬜ {dimension_name}** "
-        f"({dimension_type})"
-    )
-
-    if items:
-
-        st.write(
-            "Indicators: "
-            + ", ".join(items)
-        )
 
 # ============================================================
-# AVAILABLE CONSTRUCTS
-# ============================================================
-
-st.divider()
-
-st.header("🧩 Structural Constructs")
-
-st.write(
-    "Select the constructs that participate in the structural model."
-)
-
-available_constructs = []
-
-# Existing simple PLS constructs
-if "pls_constructs" in st.session_state:
-
-    existing_constructs = st.session_state[
-        "pls_constructs"
-    ]
-
-    if isinstance(
-        existing_constructs,
-        dict
-    ):
-
-        available_constructs.extend(
-            list(
-                existing_constructs.keys()
-            )
-        )
-
-# Add HOC
-if hoc_name not in available_constructs:
-
-    available_constructs.append(
-        hoc_name
-    )
-
-# Add dimensions if desired for structural specification
-for dimension_name in dimensions.keys():
-
-    if dimension_name not in available_constructs:
-
-        available_constructs.append(
-            dimension_name
-        )
-
-available_constructs = list(
-    dict.fromkeys(
-        available_constructs
-    )
-)
-
-if not available_constructs:
-
-    st.error(
-        "❌ No constructs are available for structural modelling."
-    )
-
-    st.stop()
-
-st.write(
-    "**Available Constructs:**"
-)
-
-st.write(
-    ", ".join(
-        available_constructs
-    )
-)
-
-# ============================================================
-# STRUCTURAL MODEL PATHS
-# ============================================================
-
-st.divider()
-
-st.header("🔗 Structural Path Specification")
-
-st.write(
-    "Specify the hypothesized relationship between a predictor "
-    "construct and an outcome construct."
-)
-
-# ============================================================
-# INITIALIZE PATH STATE
-# ============================================================
-
-if "higher_order_structural_paths" not in st.session_state:
-
-    st.session_state[
-        "higher_order_structural_paths"
-    ] = []
-
-paths = st.session_state[
-    "higher_order_structural_paths"
-]
-
-# ============================================================
-# ADD PATH
-# ============================================================
-
-st.subheader("➕ Add Structural Path")
-
-col1, col2, col3 = st.columns(
-    [2, 2, 1]
-)
-
-with col1:
-
-    predictor = st.selectbox(
-        "Predictor Construct",
-        available_constructs,
-        key="hoc_predictor"
-    )
-
-with col2:
-
-    possible_outcomes = [
-        construct
-        for construct in available_constructs
-        if construct != predictor
-    ]
-
-    if possible_outcomes:
-
-        outcome = st.selectbox(
-            "Outcome Construct",
-            possible_outcomes,
-            key="hoc_outcome"
-        )
-
-    else:
-
-        outcome = None
-
-with col3:
-
-    st.write("")
-    st.write("")
-
-    add_path = st.button(
-        "➕ Add Path",
-        type="primary",
-        key="add_hoc_path"
-    )
-
-if add_path and outcome:
-
-    duplicate = False
-
-    for path in paths:
-
-        if (
-            path["predictor"] == predictor
-            and
-            path["outcome"] == outcome
-        ):
-
-            duplicate = True
-
-    if duplicate:
-
-        st.warning(
-            "⚠️ This structural path already exists."
-        )
-
-    else:
-
-        hypothesis_number = len(
-            paths
-        ) + 1
-
-        new_path = {
-            "hypothesis":
-                f"H{hypothesis_number}",
-            "predictor":
-                predictor,
-            "outcome":
-                outcome
-        }
-
-        paths.append(
-            new_path
-        )
-
-        st.session_state[
-            "higher_order_structural_paths"
-        ] = paths
-
-        st.success(
-            f"✅ H{hypothesis_number} added: "
-            f"{predictor} → {outcome}"
-        )
-
-        st.rerun()
-
-# ============================================================
-# CURRENT PATHS
+# HIGHER-ORDER MEASUREMENT HIERARCHY
 # ============================================================
 
 st.divider()
 
 st.subheader(
-    "📋 Current Structural Paths"
-)
-
-if paths:
-
-    path_table = pd.DataFrame(
-        paths
-    )
-
-    path_table.columns = [
-        "Hypothesis",
-        "Predictor",
-        "Outcome"
-    ]
-
-    st.dataframe(
-        path_table,
-        use_container_width=True,
-        hide_index=True
-    )
-
-else:
-
-    st.info(
-        "No structural paths have been added yet."
-    )
-
-# ============================================================
-# REMOVE PATH
-# ============================================================
-
-if paths:
-
-    st.subheader(
-        "🗑️ Remove Structural Path"
-    )
-
-    path_labels = [
-        (
-            f"{path['hypothesis']}: "
-            f"{path['predictor']} → "
-            f"{path['outcome']}"
-        )
-        for path in paths
-    ]
-
-    selected_path = st.selectbox(
-        "Select Path to Remove",
-        path_labels,
-        key="remove_hoc_path"
-    )
-
-    if st.button(
-        "🗑️ Remove Selected Path",
-        key="remove_selected_hoc_path"
-    ):
-
-        selected_index = path_labels.index(
-            selected_path
-        )
-
-        paths.pop(
-            selected_index
-        )
-
-        # Renumber hypotheses
-        for index, path in enumerate(
-            paths
-        ):
-
-            path["hypothesis"] = (
-                f"H{index + 1}"
-            )
-
-        st.session_state[
-            "higher_order_structural_paths"
-        ] = paths
-
-        st.success(
-            "✅ Structural path removed."
-        )
-
-        st.rerun()
-
-# ============================================================
-# CLEAR ALL
-# ============================================================
-
-if paths:
-
-    if st.button(
-        "🧹 Clear All Structural Paths",
-        key="clear_hoc_paths"
-    ):
-
-        st.session_state[
-            "higher_order_structural_paths"
-        ] = []
-
-        st.success(
-            "✅ All structural paths cleared."
-        )
-
-        st.rerun()
-
-# ============================================================
-# QUICK MODEL BUILDER
-# ============================================================
-
-st.divider()
-
-st.header(
-    "⚡ Quick Structural Model Builder"
+    "🏗️ Higher-Order Measurement Hierarchy"
 )
 
 st.write(
-    "Use this option when you already know the sequence "
-    "of your hypothesized relationships."
+    "The following structures come from the Higher-Order "
+    "Construct page. Dimensions remain part of the measurement "
+    "hierarchy and are not treated as ordinary structural constructs."
 )
 
-quick_predictors = st.multiselect(
-    "Select Predictor Constructs",
-    available_constructs,
-    key="quick_hoc_predictors"
-)
 
-quick_outcome = st.selectbox(
-    "Select Common Outcome Construct",
-    available_constructs,
-    key="quick_hoc_outcome"
-)
+for hoc_name, hoc_information in higher_order_models.items():
 
-if st.button(
-    "⚡ Build Quick Model",
-    key="build_quick_hoc_model"
-):
+    hoc_type = hoc_information.get(
+        "type",
+        "Reflective"
+    )
 
-    if not quick_predictors:
+    dimensions = hoc_information.get(
+        "dimensions",
+        {}
+    )
 
-        st.warning(
-            "⚠️ Select at least one predictor."
+    st.markdown(
+        f"### 🟢 {hoc_name}"
+    )
+
+    st.caption(
+        f"Higher-Order Measurement Type: {hoc_type}"
+    )
+
+    for dimension_name, dimension_information in dimensions.items():
+
+        dimension_type = dimension_information.get(
+            "type",
+            "Reflective"
         )
 
-    else:
+        items = dimension_information.get(
+            "items",
+            []
+        )
 
-        added = 0
+        st.markdown(
+            f"**⬜ {dimension_name} ({dimension_type})**"
+        )
 
-        for predictor in quick_predictors:
+        if items:
 
-            if predictor == quick_outcome:
-                continue
-
-            duplicate = any(
-                path["predictor"] == predictor
-                and
-                path["outcome"] == quick_outcome
-                for path in paths
-            )
-
-            if not duplicate:
-
-                paths.append(
-                    {
-                        "hypothesis":
-                            f"H{len(paths) + 1}",
-                        "predictor":
-                            predictor,
-                        "outcome":
-                            quick_outcome
-                    }
-                )
-
-                added += 1
-
-        st.session_state[
-            "higher_order_structural_paths"
-        ] = paths
-
-        if added:
-
-            st.success(
-                f"✅ {added} structural path(s) added."
+            st.write(
+                "Indicators: "
+                + ", ".join(items)
             )
 
         else:
 
-            st.info(
-                "No new paths were added."
+            st.warning(
+                f"⚠️ No indicators found for {dimension_name}."
             )
 
-        st.rerun()
 
 # ============================================================
-# SEQUENTIAL MODEL BUILDER
+# STRUCTURAL CONSTRUCTS
 # ============================================================
 
 st.divider()
 
-st.header(
-    "➡️ Sequential Model Builder"
+st.subheader(
+    "🔗 Structural Model Constructs"
 )
 
 st.write(
-    "Build a chain such as:"
+    "Only research constructs that can participate in "
+    "hypothesized structural relationships are listed here."
 )
 
-st.code(
-    "Construct A → Construct B → Construct C"
+st.success(
+    "Available Structural Constructs: "
+    + ", ".join(available_constructs)
 )
 
-sequence = st.multiselect(
-    "Select Constructs in Structural Sequence",
-    available_constructs,
-    key="hoc_sequence"
-)
 
-if st.button(
-    "➡️ Build Sequential Model",
-    key="build_hoc_sequence"
+# ============================================================
+# CURRENT PATH STORAGE
+# ============================================================
+
+if (
+    "pls_higher_order_structural_paths"
+    not in st.session_state
 ):
 
-    if len(sequence) < 2:
+    st.session_state[
+        "pls_higher_order_structural_paths"
+    ] = []
 
-        st.warning(
-            "⚠️ Select at least two constructs."
-        )
 
-    else:
+paths = st.session_state[
+    "pls_higher_order_structural_paths"
+]
 
-        added = 0
 
-        for i in range(
-            len(sequence) - 1
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def path_exists(
+    paths_list,
+    predictor,
+    outcome
+):
+    """
+    Check whether a predictor → outcome path already exists.
+    """
+
+    for path in paths_list:
+
+        if (
+            path.get("predictor")
+            == predictor
+            and
+            path.get("outcome")
+            == outcome
         ):
 
-            predictor = sequence[i]
-            outcome = sequence[i + 1]
+            return True
 
-            duplicate = any(
-                path["predictor"] == predictor
-                and
-                path["outcome"] == outcome
-                for path in paths
-            )
+    return False
 
-            if not duplicate:
 
-                paths.append(
-                    {
-                        "hypothesis":
-                            f"H{len(paths) + 1}",
-                        "predictor":
-                            predictor,
-                        "outcome":
-                            outcome
-                    }
-                )
+def next_hypothesis_number(
+    paths_list
+):
+    """
+    Return H1, H2, H3...
+    """
 
-                added += 1
+    return f"H{len(paths_list) + 1}"
 
-        st.session_state[
-            "higher_order_structural_paths"
-        ] = paths
 
-        st.success(
-            f"✅ {added} sequential path(s) added."
+def remove_path_by_index(
+    paths_list,
+    index
+):
+    """
+    Remove one structural path.
+    """
+
+    if (
+        index >= 0
+        and
+        index < len(paths_list)
+    ):
+
+        return (
+            paths_list[:index]
+            +
+            paths_list[index + 1:]
         )
 
-        st.rerun()
+    return paths_list
 
-# ============================================================
-# MODEL DIAGRAM
-# ============================================================
 
-st.divider()
+def create_path_table(
+    paths_list
+):
 
-st.header(
-    "📊 Structural Model Diagram"
-)
+    rows = []
 
-if paths:
+    for path in paths_list:
 
-    # --------------------------------------------------------
-    # Determine constructs used in structural paths
-    # --------------------------------------------------------
+        rows.append(
+            {
+                "Hypothesis":
+                    path.get(
+                        "hypothesis",
+                        ""
+                    ),
 
-    structural_constructs = []
+                "Predictor":
+                    path.get(
+                        "predictor",
+                        ""
+                    ),
 
-    for path in paths:
+                "Outcome":
+                    path.get(
+                        "outcome",
+                        ""
+                    )
+            }
+        )
 
-        if path["predictor"] not in structural_constructs:
+    return pd.DataFrame(rows)
 
-            structural_constructs.append(
-                path["predictor"]
-            )
 
-        if path["outcome"] not in structural_constructs:
+def make_structural_figure(
+    constructs,
+    paths_list
+):
+    """
+    Create a simple structural model diagram.
+    """
 
-            structural_constructs.append(
-                path["outcome"]
-            )
+    fig = go.Figure()
 
-    # --------------------------------------------------------
-    # Coordinates
-    # --------------------------------------------------------
+    if not constructs:
 
-    node_positions = {}
+        return fig
 
-    number_of_nodes = len(
-        structural_constructs
-    )
+    n = len(constructs)
 
-    if number_of_nodes == 1:
+    if n == 1:
 
         x_positions = [0.5]
 
     else:
 
         x_positions = [
-            0.10 +
+            0.08
+            +
             (
-                0.80 *
-                i /
-                (number_of_nodes - 1)
+                0.84
+                *
+                i
+                /
+                (n - 1)
             )
-            for i in range(
-                number_of_nodes
-            )
+            for i in range(n)
         ]
 
-    for construct, x in zip(
-        structural_constructs,
-        x_positions
-    ):
+    y_position = 0.55
 
-        node_positions[
-            construct
-        ] = (
-            x,
-            0.55
+    position_map = {
+        construct:
+            (
+                x_positions[i],
+                y_position
+            )
+        for i, construct in enumerate(
+            constructs
+        )
+    }
+
+    # --------------------------------------------------------
+    # Draw structural arrows
+    # --------------------------------------------------------
+
+    for path in paths_list:
+
+        predictor = path.get(
+            "predictor"
         )
 
-    fig = go.Figure()
-
-    # --------------------------------------------------------
-    # Draw paths first
-    # --------------------------------------------------------
-
-    for path in paths:
-
-        predictor = path[
-            "predictor"
-        ]
-
-        outcome = path[
+        outcome = path.get(
             "outcome"
-        ]
+        )
 
-        x1, y1 = node_positions[
+        if (
+            predictor not in position_map
+            or
+            outcome not in position_map
+        ):
+
+            continue
+
+        predictor_x, predictor_y = position_map[
             predictor
         ]
 
-        x2, y2 = node_positions[
+        outcome_x, outcome_y = position_map[
             outcome
         ]
 
         fig.add_annotation(
-            x=x2,
-            y=y2,
-            ax=x1,
-            ay=y1,
+            x=outcome_x,
+            y=outcome_y,
+            ax=predictor_x,
+            ay=predictor_y,
             xref="x",
             yref="y",
             axref="x",
             ayref="y",
             showarrow=True,
             arrowhead=2,
-            arrowsize=1,
+            arrowsize=1.2,
             arrowwidth=2,
-            text=path[
-                "hypothesis"
-            ]
+            text=""
         )
 
     # --------------------------------------------------------
     # Node labels
     # --------------------------------------------------------
 
-    node_text = []
-
-    for construct in structural_constructs:
-
-        if construct == hoc_name:
-
-            node_text.append(
-                f"<b>{construct}</b><br>"
-                f"Higher-Order Construct"
-            )
-
-        elif construct in dimensions:
-
-            node_text.append(
-                f"<b>{construct}</b><br>"
-                f"Dimension"
-            )
-
-        else:
-
-            node_text.append(
-                f"<b>{construct}</b><br>"
-                f"Construct"
-            )
-
-    node_sizes = []
-
-    for construct in structural_constructs:
-
-        if construct == hoc_name:
-
-            node_sizes.append(
-                80
-            )
-
-        else:
-
-            node_sizes.append(
-                65
-            )
-
     fig.add_trace(
         go.Scatter(
-            x=[
-                node_positions[c][0]
-                for c in structural_constructs
-            ],
+            x=x_positions,
             y=[
-                node_positions[c][1]
-                for c in structural_constructs
+                y_position
+                for _ in constructs
             ],
             mode="markers+text",
             marker=dict(
-                size=node_sizes,
+                size=70,
                 symbol="circle",
                 line=dict(
                     width=2
                 )
             ),
-            text=node_text,
+            text=[
+                f"<b>{construct}</b>"
+                for construct in constructs
+            ],
             textposition="middle center",
             hoverinfo="text",
+            hovertext=[
+                f"Construct: {construct}"
+                for construct in constructs
+            ],
             showlegend=False
         )
     )
@@ -811,12 +581,12 @@ if paths:
                 "Higher-Order Structural Model",
             "x": 0.5
         },
-        height=600,
+        height=500,
         margin=dict(
-            l=50,
-            r=50,
-            t=90,
-            b=50
+            l=40,
+            r=40,
+            t=80,
+            b=40
         ),
         xaxis=dict(
             visible=False,
@@ -830,59 +600,478 @@ if paths:
         paper_bgcolor="white"
     )
 
+    return fig
+
+
+# ============================================================
+# STRUCTURAL PATH SPECIFICATION
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "🔗 Structural Path Specification"
+)
+
+st.write(
+    "Specify the hypothesized relationship between a "
+    "predictor construct and an outcome construct."
+)
+
+
+# ------------------------------------------------------------
+# Add path
+# ------------------------------------------------------------
+
+st.markdown(
+    "### ➕ Add Structural Path"
+)
+
+if len(available_constructs) >= 2:
+
+    col1, col2, col3 = st.columns(
+        [1, 1, 0.35]
+    )
+
+    with col1:
+
+        predictor_construct = st.selectbox(
+            "Predictor Construct",
+            available_constructs,
+            key="hoc_structural_predictor"
+        )
+
+    with col2:
+
+        outcome_construct = st.selectbox(
+            "Outcome Construct",
+            available_constructs,
+            key="hoc_structural_outcome"
+        )
+
+    with col3:
+
+        st.write("")
+        st.write("")
+
+        add_path_clicked = st.button(
+            "➕ Add Path",
+            type="primary",
+            key="hoc_add_path"
+        )
+
+    if add_path_clicked:
+
+        if predictor_construct == outcome_construct:
+
+            st.error(
+                "❌ A construct cannot be used as both "
+                "predictor and outcome in the same path."
+            )
+
+        elif path_exists(
+            paths,
+            predictor_construct,
+            outcome_construct
+        ):
+
+            st.warning(
+                "⚠️ This structural path already exists."
+            )
+
+        else:
+
+            hypothesis = next_hypothesis_number(
+                paths
+            )
+
+            new_path = {
+                "hypothesis":
+                    hypothesis,
+
+                "predictor":
+                    predictor_construct,
+
+                "outcome":
+                    outcome_construct
+            }
+
+            paths = paths + [
+                new_path
+            ]
+
+            st.session_state[
+                "pls_higher_order_structural_paths"
+            ] = paths
+
+            st.success(
+                f"✅ {hypothesis} added: "
+                f"{predictor_construct} → "
+                f"{outcome_construct}"
+            )
+
+            st.rerun()
+
+else:
+
+    st.warning(
+        "⚠️ At least two constructs are required."
+    )
+
+
+# ============================================================
+# CURRENT STRUCTURAL PATHS
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "📋 Current Structural Paths"
+)
+
+if paths:
+
+    path_table = create_path_table(
+        paths
+    )
+
+    st.dataframe(
+        path_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # Remove path
+    # --------------------------------------------------------
+
+    st.markdown(
+        "### 🗑️ Remove Structural Path"
+    )
+
+    path_labels = []
+
+    for i, path in enumerate(paths):
+
+        path_labels.append(
+            (
+                i,
+                f"{path.get('hypothesis', f'H{i+1}')}: "
+                f"{path.get('predictor', '')} → "
+                f"{path.get('outcome', '')}"
+            )
+        )
+
+    selected_path_label = st.selectbox(
+        "Select path to remove",
+        path_labels,
+        format_func=lambda x: x[1],
+        key="hoc_remove_path_selection"
+    )
+
+    if st.button(
+        "🗑️ Remove Selected Path",
+        key="hoc_remove_path"
+    ):
+
+        remove_index = selected_path_label[0]
+
+        paths = remove_path_by_index(
+            paths,
+            remove_index
+        )
+
+        # ----------------------------------------------------
+        # Renumber hypotheses
+        # ----------------------------------------------------
+
+        for i, path in enumerate(paths):
+
+            path["hypothesis"] = f"H{i + 1}"
+
+        st.session_state[
+            "pls_higher_order_structural_paths"
+        ] = paths
+
+        st.success(
+            "✅ Structural path removed."
+        )
+
+        st.rerun()
+
+else:
+
+    st.info(
+        "No structural paths have been added yet."
+    )
+
+
+# ============================================================
+# QUICK MODEL BUILDER
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "⚡ Quick Structural Model Builder"
+)
+
+st.write(
+    "Use this option to create several structural paths "
+    "quickly. The system will use the constructs currently "
+    "available in the structural model."
+)
+
+if len(available_constructs) >= 2:
+
+    quick_predictor = st.selectbox(
+        "Quick Builder Predictor",
+        available_constructs,
+        key="quick_hoc_predictor"
+    )
+
+    quick_outcomes = st.multiselect(
+        "Quick Builder Outcomes",
+        [
+            construct
+            for construct in available_constructs
+            if construct != quick_predictor
+        ],
+        key="quick_hoc_outcomes"
+    )
+
+    if st.button(
+        "⚡ Add Quick Structural Paths",
+        key="quick_add_hoc_paths"
+    ):
+
+        if not quick_outcomes:
+
+            st.warning(
+                "⚠️ Please select at least one outcome construct."
+            )
+
+        else:
+
+            updated_paths = paths.copy()
+
+            added_count = 0
+
+            for outcome in quick_outcomes:
+
+                if not path_exists(
+                    updated_paths,
+                    quick_predictor,
+                    outcome
+                ):
+
+                    updated_paths.append(
+                        {
+                            "hypothesis":
+                                f"H{len(updated_paths) + 1}",
+
+                            "predictor":
+                                quick_predictor,
+
+                            "outcome":
+                                outcome
+                        }
+                    )
+
+                    added_count += 1
+
+            # Renumber
+            for i, path in enumerate(
+                updated_paths
+            ):
+
+                path["hypothesis"] = f"H{i + 1}"
+
+            st.session_state[
+                "pls_higher_order_structural_paths"
+            ] = updated_paths
+
+            st.success(
+                f"✅ {added_count} structural path(s) added."
+            )
+
+            st.rerun()
+
+
+# ============================================================
+# SEQUENTIAL MODEL BUILDER
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "➡️ Sequential Structural Model Builder"
+)
+
+st.write(
+    "Create a sequential chain such as "
+    "Variable_1 → Variable_2 → Variable_3."
+)
+
+if len(available_constructs) >= 2:
+
+    sequential_order = st.multiselect(
+        "Select constructs in theoretical sequence",
+        available_constructs,
+        key="hoc_sequential_order"
+    )
+
+    if st.button(
+        "➡️ Build Sequential Model",
+        key="build_hoc_sequential"
+    ):
+
+        if len(sequential_order) < 2:
+
+            st.warning(
+                "⚠️ Select at least two constructs."
+            )
+
+        else:
+
+            updated_paths = paths.copy()
+
+            added_count = 0
+
+            for i in range(
+                len(sequential_order) - 1
+            ):
+
+                predictor = sequential_order[i]
+                outcome = sequential_order[i + 1]
+
+                if not path_exists(
+                    updated_paths,
+                    predictor,
+                    outcome
+                ):
+
+                    updated_paths.append(
+                        {
+                            "hypothesis":
+                                f"H{len(updated_paths) + 1}",
+
+                            "predictor":
+                                predictor,
+
+                            "outcome":
+                                outcome
+                        }
+                    )
+
+                    added_count += 1
+
+            for i, path in enumerate(
+                updated_paths
+            ):
+
+                path["hypothesis"] = f"H{i + 1}"
+
+            st.session_state[
+                "pls_higher_order_structural_paths"
+            ] = updated_paths
+
+            st.success(
+                f"✅ Sequential model created with "
+                f"{added_count} new path(s)."
+            )
+
+            st.rerun()
+
+
+# ============================================================
+# STRUCTURAL MODEL DIAGRAM
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "📊 Structural Model Diagram"
+)
+
+if paths:
+
+    structural_figure = make_structural_figure(
+        available_constructs,
+        paths
+    )
+
     st.plotly_chart(
-        fig,
+        structural_figure,
         use_container_width=True
     )
 
 else:
 
     st.info(
-        "Add at least one structural path to display the model diagram."
+        "Add at least one structural path to display the diagram."
     )
 
+
 # ============================================================
-# STRUCTURAL MODEL SUMMARY
+# ENDOGENOUS / EXOGENOUS SUMMARY
 # ============================================================
 
 st.divider()
 
-st.header(
-    "📋 Structural Model Summary"
+st.subheader(
+    "📊 Structural Model Summary"
 )
 
 if paths:
 
-    endogenous = list(
-        dict.fromkeys(
-            path["outcome"]
+    endogenous = []
+
+    exogenous = []
+
+    for construct in available_constructs:
+
+        is_outcome = any(
+            path.get("outcome")
+            == construct
             for path in paths
         )
-    )
 
-    exogenous = [
-        construct
-        for construct in structural_constructs
-        if construct not in endogenous
-    ]
+        is_predictor = any(
+            path.get("predictor")
+            == construct
+            for path in paths
+        )
 
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
+        if is_outcome:
 
-    with summary_col1:
+            endogenous.append(
+                construct
+            )
+
+        elif is_predictor:
+
+            exogenous.append(
+                construct
+            )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
 
         st.metric(
             "Structural Paths",
             len(paths)
         )
 
-    with summary_col2:
+    with col2:
 
         st.metric(
             "Endogenous Constructs",
             len(endogenous)
         )
 
-    with summary_col3:
+    with col3:
 
         st.metric(
             "Exogenous Constructs",
@@ -907,37 +1096,6 @@ if paths:
         )
     )
 
-else:
-
-    st.info(
-        "No structural paths have been defined."
-    )
-
-# ============================================================
-# HIGHER-ORDER CONSTRUCT RELATIONSHIP NOTE
-# ============================================================
-
-st.divider()
-
-st.header(
-    "📌 Higher-Order Construct Interpretation"
-)
-
-st.info(
-    f"The Higher-Order Construct **{hoc_name}** contains "
-    f"{len(dimensions)} dimension(s). The relationships between "
-    "the HOC and its dimensions belong to the measurement model. "
-    "The structural model should contain theoretical relationships "
-    "between research constructs."
-)
-
-st.warning(
-    "⚠️ Do not interpret HOC → Dimension relationships as ordinary "
-    "hypotheses unless your theoretical model specifically requires "
-    "such a structural interpretation. In hierarchical PLS-SEM, "
-    "these relationships are generally part of the higher-order "
-    "measurement specification."
-)
 
 # ============================================================
 # RESEARCHER CONFIRMATION
@@ -945,24 +1103,33 @@ st.warning(
 
 st.divider()
 
-st.header(
+st.subheader(
     "🧑‍🔬 Researcher Confirmation"
 )
 
-confirm_structure = st.checkbox(
-    "I confirm that the structural paths and hypotheses "
-    "represent my theoretical research model.",
-    key="confirm_higher_order_structural_model"
+st.write(
+    "Structural paths are theory-driven hypotheses. "
+    "The software does not determine which constructs should "
+    "predict which other constructs."
 )
 
-researcher_notes = st.text_area(
-    "Researcher Notes",
-    placeholder=(
-        "Enter theoretical justification, hypothesis notes, "
-        "or other methodological comments."
-    ),
-    key="higher_order_structural_notes"
-)
+if paths:
+
+    confirm_structural_model = st.checkbox(
+        "I confirm that the structural paths represent "
+        "the theoretically hypothesized relationships "
+        "in my research model.",
+        key="confirm_hoc_structural_model"
+    )
+
+else:
+
+    confirm_structural_model = False
+
+    st.info(
+        "Add at least one structural path before confirming the model."
+    )
+
 
 # ============================================================
 # SAVE STRUCTURAL MODEL
@@ -971,81 +1138,106 @@ researcher_notes = st.text_area(
 if st.button(
     "💾 Save Higher-Order Structural Model",
     type="primary",
-    disabled=not confirm_structure,
-    key="save_higher_order_structural_model"
+    disabled=(
+        not paths
+        or not confirm_structural_model
+    ),
+    key="save_hoc_structural_model"
 ):
 
-    if not paths:
+    structural_model = {
+        "higher_order_models":
+            higher_order_models,
 
-        st.error(
-            "❌ Please define at least one structural path."
+        "paths":
+            paths,
+
+        "constructs":
+            available_constructs,
+
+        "confirmed":
+            True
+    }
+
+    # --------------------------------------------------------
+    # Main structural model key
+    # --------------------------------------------------------
+
+    st.session_state[
+        "pls_higher_order_structural_model"
+    ] = structural_model
+
+    # --------------------------------------------------------
+    # Explicit path key
+    # --------------------------------------------------------
+
+    st.session_state[
+        "pls_higher_order_structural_paths"
+    ] = paths
+
+    st.success(
+        "✅ Higher-Order Structural Model saved successfully."
+    )
+
+    st.rerun()
+
+
+# ============================================================
+# SAVED STRUCTURAL MODEL
+# ============================================================
+
+saved_structural_model = st.session_state.get(
+    "pls_higher_order_structural_model"
+)
+
+if isinstance(
+    saved_structural_model,
+    dict
+):
+
+    saved_paths = saved_structural_model.get(
+        "paths",
+        []
+    )
+
+    if saved_paths:
+
+        st.divider()
+
+        st.subheader(
+            "💾 Saved Higher-Order Structural Model"
         )
-
-    else:
-
-        structural_model = {
-            "higher_order_construct":
-                hoc_name,
-            "higher_order_type":
-                hoc_type,
-            "dimensions":
-                dimensions,
-            "paths":
-                paths,
-            "researcher_notes":
-                researcher_notes
-        }
-
-        st.session_state[
-            "pls_higher_order_structural_model"
-        ] = structural_model
-
-        # Also save a compatible path structure
-        st.session_state[
-            "pls_higher_order_structural_paths"
-        ] = paths
 
         st.success(
-            "✅ Higher-Order Structural Model saved successfully."
+            "✅ Structural model is currently saved."
         )
 
-# ============================================================
-# SAVED MODEL STATUS
-# ============================================================
+        saved_table = create_path_table(
+            saved_paths
+        )
 
-if "pls_higher_order_structural_model" in st.session_state:
+        st.dataframe(
+            saved_table,
+            use_container_width=True,
+            hide_index=True
+        )
 
-    saved_structural_model = st.session_state[
-        "pls_higher_order_structural_model"
-    ]
+        st.write(
+            f"**Number of Structural Paths:** "
+            f"{len(saved_paths)}"
+        )
 
-    st.divider()
+        st.write(
+            "**Structural Constructs:** "
+            +
+            ", ".join(
+                saved_structural_model.get(
+                    "constructs",
+                    available_constructs
+                )
+            )
+        )
 
-    st.subheader(
-        "✅ Saved Higher-Order Structural Model"
-    )
-
-    st.write(
-        f"**Higher-Order Construct:** "
-        f"{saved_structural_model['higher_order_construct']}"
-    )
-
-    st.write(
-        f"**Structural Paths:** "
-        f"{len(saved_structural_model['paths'])}"
-    )
-
-    saved_path_table = pd.DataFrame(
-        saved_structural_model[
-            "paths"
-        ]
-    )
-
-    st.dataframe(
-        saved_path_table,
-        use_container_width=True,
-        hide_index=True
-    )
 
 # ============================================================
 # METHODOLOGICAL NOTE
@@ -1054,9 +1246,11 @@ if "pls_higher_order_structural_model" in st.session_state:
 st.divider()
 
 st.info(
-    "📌 Methodological note: This page provides a "
-    "research-support structural-model builder. Path coefficients, "
-    "R², f², bootstrapping, Q², and hypothesis testing should be "
-    "calculated on the subsequent PLS-SEM Results page. The software "
-    "should not be described as an exact SmartPLS replacement."
+    "📌 Methodological note: The Higher-Order Construct → "
+    "Dimension → Indicator relationships represent a measurement "
+    "hierarchy and are not automatically treated as structural "
+    "hypotheses. Structural paths are specified separately based "
+    "on the researcher's theoretical framework. This application "
+    "provides research-support PLS-SEM-style functionality and "
+    "should not be described as an exact reproduction of SmartPLS."
 )
