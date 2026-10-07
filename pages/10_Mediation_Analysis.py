@@ -1,3 +1,4 @@
+import math
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -340,7 +341,7 @@ def bootstrap_statistics(
     # Normal approximation for two-sided p-value
     p_value = 2 * (
         1 - 0.5 * (
-            1 + np.math.erf(
+            1 + math.erf(
                 abs(t_value) / np.sqrt(2)
             )
         )
