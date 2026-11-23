@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import hashlib
+from io import BytesIO
 
 
 # ==========================================
@@ -30,359 +32,190 @@ Upload an Excel (.xlsx) or CSV (.csv) file to analyse your data.
 # ==========================================
 uploaded_file = st.file_uploader(
     "📂 Upload Excel or CSV",
-    type=["csv", "xlsx"]
+    type=["csv", "xlsx"],
+    key="main_dataset_uploader"
 )
 
-
 if uploaded_file is not None:
+    file_bytes = uploaded_file.getvalue()
+    file_signature = hashlib.sha256(file_bytes).hexdigest()
+    previous_signature = st.session_state.get("dataset_signature")
 
-    # ======================================
-    # RESET OLD STRUCTURE INFORMATION
-    # ======================================
-    # This prevents an old Excel structure
-    # from remaining when a new file is uploaded.
+    # Only parse/reset when a genuinely different file is uploaded.
+    # This prevents ordinary reruns from repeatedly clearing the
+    # detected workbook structure.
+    if file_signature != previous_signature:
+        try:
+            if uploaded_file.name.lower().endswith(".csv"):
+                df = pd.read_csv(BytesIO(file_bytes))
+                sheet_names = []
+                questionnaire_sheet = None
+                structure_sheet = None
+                st.session_state.pop("pls_structure", None)
+                st.session_state["excel_sheet_names"] = []
+                st.session_state["excel_structure_detected"] = False
+            else:
+                excel_file = pd.ExcelFile(BytesIO(file_bytes))
+                sheet_names = excel_file.sheet_names
 
-    st.session_state.pop(
-        "pls_structure",
-        None
-    )
+                preferred_questionnaire_names = [
+                    "Questionnaire_Data", "Questionnaire Data",
+                    "Data", "Dataset", "Survey_Data", "Survey Data"
+                ]
+                questionnaire_sheet = next(
+                    (name for name in preferred_questionnaire_names
+                     if name in sheet_names),
+                    sheet_names[0] if sheet_names else None
+                )
+                if questionnaire_sheet is None:
+                    st.error("The uploaded Excel workbook contains no worksheets.")
+                    st.stop()
 
-    st.session_state.pop(
-        "excel_sheet_names",
-        None
-    )
+                df = pd.read_excel(
+                    BytesIO(file_bytes),
+                    sheet_name=questionnaire_sheet
+                )
 
-    st.session_state.pop(
-        "excel_structure_detected",
-        None
-    )
+                preferred_structure_names = [
+                    "PLS_SEM_Structure", "PLS-SEM_Structure",
+                    "PLS SEM Structure", "PLS-SEM Structure",
+                    "SEM_Structure", "SEM Structure",
+                    "Model_Structure", "Model Structure"
+                ]
+                structure_sheet = next(
+                    (name for name in preferred_structure_names
+                     if name in sheet_names),
+                    None
+                )
 
+                if structure_sheet is not None:
+                    structure_df = pd.read_excel(
+                        BytesIO(file_bytes),
+                        sheet_name=structure_sheet
+                    ).dropna(how="all").dropna(axis=1, how="all")
 
-    # ======================================
-    # READ CSV FILE
-    # ======================================
+                    # Standardise common spreadsheet header variants so
+                    # all analysis pages receive the same schema.
+                    structure_aliases = {
+                        "higherorderconstruct": "Higher_Order_Construct",
+                        "higherorderconstructname": "Higher_Order_Construct",
+                        "higherorder": "Higher_Order_Construct",
+                        "hoc": "Higher_Order_Construct",
+                        "construct": "Higher_Order_Construct",
+                        "dimension": "Dimension",
+                        "dimensionname": "Dimension",
+                        "measurementtype": "Measurement_Type",
+                        "measurement": "Measurement_Type",
+                        "type": "Measurement_Type",
+                        "indicator": "Indicator",
+                        "item": "Indicator",
+                        "questionnaireitem": "Indicator",
+                    }
+                    structure_rename = {}
+                    for column in structure_df.columns:
+                        normalised = "".join(
+                            char.lower() for char in str(column).strip()
+                            if char.isalnum()
+                        )
+                        if normalised in structure_aliases:
+                            structure_rename[column] = structure_aliases[normalised]
+                    structure_df = structure_df.rename(columns=structure_rename)
 
-    if uploaded_file.name.lower().endswith(".csv"):
+                    st.session_state["pls_structure"] = structure_df
+                    st.session_state["excel_structure_detected"] = True
+                else:
+                    st.session_state.pop("pls_structure", None)
+                    st.session_state["excel_structure_detected"] = False
 
-        df = pd.read_csv(
-            uploaded_file
-        )
+                st.session_state["excel_sheet_names"] = sheet_names
 
-        st.session_state["df"] = df
+            # A different dataset invalidates models/results linked to
+            # the previous dataset. Clear them to avoid analysing stale items.
+            dataset_dependent_keys = [
+                "pls_constructs", "pls_structural_paths",
+                "pls_higher_order_model", "pls_higher_order_models",
+                "pls_higher_order_structural_model",
+                "pls_higher_order_structural_paths",
+                "measurement_model_decisions",
+                "higher_order_measurement_decisions",
+                "content_validity_results", "content_validity_decisions",
+                "data_quality_results", "reliability_results",
+                "eda_results", "mediation_results"
+            ]
+            for key in dataset_dependent_keys:
+                st.session_state.pop(key, None)
 
-        st.info(
-            "ℹ️ CSV file detected. "
-            "No Excel PLS-SEM structure sheet is available."
-        )
+            st.session_state["df"] = df
+            st.session_state["dataset_signature"] = file_signature
+            st.session_state["dataset_file_name"] = uploaded_file.name
+            st.session_state["dataset_questionnaire_sheet"] = questionnaire_sheet
+            st.session_state["dataset_structure_sheet"] = structure_sheet
 
+        except Exception as exc:
+            st.error(f"Could not read the uploaded dataset: {exc}")
+            st.stop()
 
-    # ======================================
-    # READ EXCEL FILE
-    # ======================================
-
-    else:
-
-        # Read the workbook so that we can
-        # access all sheets.
-
-        excel_file = pd.ExcelFile(
-            uploaded_file
-        )
-
-        sheet_names = excel_file.sheet_names
-
-        # Save sheet names for other pages
-        st.session_state[
-            "excel_sheet_names"
-        ] = sheet_names
-
-
-        # ==================================
-        # FIND QUESTIONNAIRE SHEET
-        # ==================================
-
-        questionnaire_sheet = None
-
-        preferred_questionnaire_names = [
-            "Questionnaire_Data",
-            "Questionnaire Data",
-            "Data",
-            "Dataset",
-            "Survey_Data",
-            "Survey Data"
-        ]
-
-        for preferred_name in preferred_questionnaire_names:
-
-            if preferred_name in sheet_names:
-
-                questionnaire_sheet = preferred_name
-
-                break
-
-
-        # ==================================
-        # IF NO STANDARD NAME IS FOUND
-        # USE FIRST SHEET
-        # ==================================
-
-        if questionnaire_sheet is None:
-
-            questionnaire_sheet = sheet_names[0]
-
-
-        # ==================================
-        # READ QUESTIONNAIRE DATA
-        # ==================================
-
-        df = pd.read_excel(
-            uploaded_file,
-            sheet_name=questionnaire_sheet
-        )
-
-        st.session_state[
-            "df"
-        ] = df
-
-
-        # ==================================
-        # FIND PLS-SEM STRUCTURE SHEET
-        # ==================================
-
-        structure_sheet = None
-
-        preferred_structure_names = [
-            "PLS_SEM_Structure",
-            "PLS-SEM_Structure",
-            "PLS SEM Structure",
-            "PLS-SEM Structure",
-            "SEM_Structure",
-            "SEM Structure",
-            "Model_Structure",
-            "Model Structure"
-        ]
-
-        for preferred_name in preferred_structure_names:
-
-            if preferred_name in sheet_names:
-
-                structure_sheet = preferred_name
-
-                break
-
-
-        # ==================================
-        # READ STRUCTURE SHEET
-        # ==================================
-
-        if structure_sheet is not None:
-
-            structure_df = pd.read_excel(
-                uploaded_file,
-                sheet_name=structure_sheet
-            )
-
-            # Remove completely empty rows
-            structure_df = structure_df.dropna(
-                how="all"
-            )
-
-            # Remove completely empty columns
-            structure_df = structure_df.dropna(
-                axis=1,
-                how="all"
-            )
-
-            st.session_state[
-                "pls_structure"
-            ] = structure_df
-
-            st.session_state[
-                "excel_structure_detected"
-            ] = True
-
-            st.success(
-                "✅ PLS-SEM structure sheet detected automatically."
-            )
-
-        else:
-
-            st.session_state[
-                "excel_structure_detected"
-            ] = False
-
-            st.info(
-                "ℹ️ No PLS-SEM structure sheet was found. "
-                "The questionnaire data will still be available "
-                "for normal analysis."
-            )
-
-
-    # ======================================
-    # SUCCESS MESSAGE
-    # ======================================
-
+    # Always read the active dataset from session state.
+    df = st.session_state["df"]
     st.success(
-        "✅ File uploaded successfully!"
+        f"✅ Dataset active: **{st.session_state.get('dataset_file_name', uploaded_file.name)}**. "
+        "You can move between analysis pages without uploading it again."
     )
 
-
-    # ======================================
-    # EXCEL SHEET INFORMATION
-    # ======================================
-
-    if uploaded_file.name.lower().endswith(
-        ".xlsx"
-    ):
-
-        st.header(
-            "📚 Excel Workbook Information"
-        )
-
+    if uploaded_file.name.lower().endswith(".xlsx"):
+        st.header("📚 Excel Workbook Information")
+        st.write("**Available Sheets:**")
+        st.write(st.session_state.get("excel_sheet_names", []))
         st.write(
-            "**Available Sheets:**"
+            "**Questionnaire Data Sheet:** "
+            f"{st.session_state.get('dataset_questionnaire_sheet')}"
         )
-
-        st.write(
-            sheet_names
-        )
-
-        st.write(
-            f"**Questionnaire Data Sheet:** "
-            f"{questionnaire_sheet}"
-        )
-
-
-        if structure_sheet is not None:
-
-            st.success(
-                f"✅ PLS-SEM Structure Sheet: "
-                f"{structure_sheet}"
-            )
-
+        structure_sheet = st.session_state.get("dataset_structure_sheet")
+        if structure_sheet:
+            st.success(f"✅ PLS-SEM Structure Sheet: {structure_sheet}")
         else:
-
-            st.warning(
-                "⚠️ PLS-SEM Structure Sheet: Not found"
+            st.info(
+                "No dedicated PLS-SEM structure sheet was found. "
+                "You can define and save your model in the PLS-SEM pages."
             )
 
-
-    # ======================================
-    # SHOW PLS-SEM STRUCTURE
-    # ======================================
-
-    if (
-        "pls_structure"
-        in st.session_state
-    ):
-
-        st.header(
-            "🏗️ Detected PLS-SEM Structure"
-        )
-
-        structure_df = st.session_state[
-            "pls_structure"
-        ]
-
+    if "pls_structure" in st.session_state:
+        st.header("🏗️ Detected PLS-SEM Structure")
         st.dataframe(
-            structure_df,
+            st.session_state["pls_structure"],
             use_container_width=True,
             hide_index=True
         )
 
+    st.header("👀 Dataset Preview")
+    st.dataframe(df, use_container_width=True)
 
-        # ==================================
-        # STRUCTURE COLUMNS CHECK
-        # ==================================
-
-        required_structure_columns = [
-            "Higher_Order_Construct",
-            "Dimension",
-            "Measurement_Type",
-            "Indicator"
-        ]
-
-        missing_structure_columns = [
-            column
-            for column in required_structure_columns
-            if column not in structure_df.columns
-        ]
-
-
-        if missing_structure_columns:
-
-            st.warning(
-                "⚠️ The PLS-SEM structure sheet was found, "
-                "but some expected columns are missing:"
-            )
-
-            st.write(
-                missing_structure_columns
-            )
-
-            st.info(
-                "Expected columns are: "
-                + ", ".join(
-                    required_structure_columns
-                )
-            )
-
-        else:
-
-            st.success(
-                "✅ Higher-order construct, "
-                "dimension, measurement type, "
-                "and indicator columns detected."
-            )
-
-
-    # ======================================
-    # DATASET PREVIEW
-    # ======================================
-
-    st.header(
-        "👀 Dataset Preview"
-    )
-
-    st.dataframe(
-        df,
-        use_container_width=True
-    )
-
-
-    # ======================================
-    # DATASET INFORMATION
-    # ======================================
-
-    st.header(
-        "📊 Dataset Information"
-    )
-
+    st.header("📊 Dataset Information")
     col1, col2 = st.columns(2)
-
     with col1:
-
-        st.metric(
-            "Rows",
-            df.shape[0]
-        )
-
+        st.metric("Rows", df.shape[0])
     with col2:
+        st.metric("Columns", df.shape[1])
 
-        st.metric(
-            "Columns",
-            df.shape[1]
-        )
+    st.write("### Column Names")
+    st.write(list(df.columns))
 
-
-    # ======================================
-    # COLUMN NAMES
-    # ======================================
-
-    st.write(
-        "### Column Names"
+elif "df" in st.session_state:
+    # Keep the already loaded dataset visible after navigation/reruns.
+    df = st.session_state["df"]
+    st.success(
+        f"✅ Existing dataset is still active: "
+        f"**{st.session_state.get('dataset_file_name', 'Uploaded dataset')}** "
+        f"({df.shape[0]} respondents, {df.shape[1]} variables)."
     )
-
-    st.write(
-        list(df.columns)
+    st.info(
+        "You do not need to upload the same file again when moving between "
+        "analysis pages. Upload a different file only to start a new analysis."
+    )
+    with st.expander("👀 View active dataset"):
+        st.dataframe(df.head(20), use_container_width=True)
+else:
+    st.info(
+        "Upload your Excel or CSV dataset once. The dataset will remain "
+        "available to the other analysis pages during this active app session."
     )
