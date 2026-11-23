@@ -1358,7 +1358,9 @@ else:
     st.info(
         "If your research theory defines dimensions, enter them "
         "manually below. The software will not invent theoretical "
-        "dimensions from indicator names."
+        "dimensions from indicator names. You can save each main "
+        "variable (Higher-Order Construct) separately; previously "
+        "saved variables remain in the project while you define the next one."
     )
 
     # --------------------------------------------------------
