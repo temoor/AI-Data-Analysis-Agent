@@ -161,152 +161,186 @@ def interpret_alpha(alpha):
 # =========================================================
 # BUILD RELIABILITY STRUCTURE
 # =========================================================
+# The reliability page accepts the same model definitions used by
+# the PLS-SEM pages:
+#   1. An Excel PLS-SEM structure sheet
+#   2. One or more saved Higher-Order Constructs (HOCs)
+#   3. A simple construct-to-indicator model
+#
+# For a higher-order model, alpha is calculated separately for each
+# first-order dimension. The HOC's dimensions are not pooled into one
+# artificial item scale.
+
+def _clean_label(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _normalise_structure_columns(structure_df):
+    if not isinstance(structure_df, pd.DataFrame) or structure_df.empty:
+        return None
+
+    result = structure_df.copy()
+    aliases = {
+        "higherorderconstruct": "Higher_Order_Construct",
+        "higherorderconstructname": "Higher_Order_Construct",
+        "higherorder": "Higher_Order_Construct",
+        "hoc": "Higher_Order_Construct",
+        "construct": "Higher_Order_Construct",
+        "dimension": "Dimension",
+        "dimensionname": "Dimension",
+        "measurementtype": "Measurement_Type",
+        "measurement": "Measurement_Type",
+        "type": "Measurement_Type",
+        "indicator": "Indicator",
+        "item": "Indicator",
+        "questionnaireitem": "Indicator",
+    }
+
+    rename = {}
+    for column in result.columns:
+        key = "".join(ch.lower() for ch in str(column).strip()
+                      if ch.isalnum())
+        if key in aliases:
+            rename[column] = aliases[key]
+    result = result.rename(columns=rename)
+
+    required = [
+        "Higher_Order_Construct", "Dimension",
+        "Measurement_Type", "Indicator"
+    ]
+    if not all(column in result.columns for column in required):
+        return None
+
+    return result[required].copy()
+
+
+def _append_reliability_group(
+    rows, model_type, construct_name, dimension_name,
+    measurement_type, items
+):
+    valid_items = []
+    for item in items if isinstance(items, (list, tuple, set)) else []:
+        item_name = _clean_label(item)
+        if item_name and item_name in df.columns and item_name not in valid_items:
+            valid_items.append(item_name)
+
+    for item_name in valid_items:
+        rows.append({
+            "Model_Type": model_type,
+            "Construct": _clean_label(construct_name),
+            "Dimension": _clean_label(dimension_name),
+            "Measurement_Type": _clean_label(measurement_type) or "Reflective",
+            "Indicator": item_name
+        })
+
+
 reliability_groups = []
 
+# OPTION 1: Excel workbook structure
+excel_structure = _normalise_structure_columns(
+    st.session_state.get("pls_structure")
+)
+if excel_structure is not None:
+    for _, row in excel_structure.iterrows():
+        hoc = _clean_label(row["Higher_Order_Construct"])
+        dimension = _clean_label(row["Dimension"])
+        indicator = _clean_label(row["Indicator"])
+        if hoc and dimension and indicator:
+            _append_reliability_group(
+                reliability_groups, "Higher-Order",
+                hoc, dimension, row["Measurement_Type"], [indicator]
+            )
 
-# =========================================================
-# OPTION 1:
-# HIGHER-ORDER / EXCEL STRUCTURE
-# =========================================================
-if "pls_structure" in st.session_state:
+# OPTION 2: Saved multiple HOC models
+# Expected format: {HOC name: {"name": ..., "dimensions": {...}}}
+if not reliability_groups:
+    saved_hocs = st.session_state.get("pls_higher_order_models", {})
+    if isinstance(saved_hocs, dict):
+        for hoc_key, hoc_model in saved_hocs.items():
+            if not isinstance(hoc_model, dict):
+                continue
+            hoc_name = hoc_model.get("name", hoc_key)
+            dimensions = hoc_model.get("dimensions", {})
+            if not isinstance(dimensions, dict):
+                continue
+            for dimension_name, dimension_info in dimensions.items():
+                if not isinstance(dimension_info, dict):
+                    continue
+                _append_reliability_group(
+                    reliability_groups, "Higher-Order",
+                    hoc_name, dimension_name,
+                    dimension_info.get("type", "Reflective"),
+                    dimension_info.get("items", [])
+                )
+    elif isinstance(saved_hocs, list):
+        for index, hoc_model in enumerate(saved_hocs, start=1):
+            if not isinstance(hoc_model, dict):
+                continue
+            hoc_name = hoc_model.get(
+                "name", f"Higher-Order Construct {index}"
+            )
+            dimensions = hoc_model.get("dimensions", {})
+            if not isinstance(dimensions, dict):
+                continue
+            for dimension_name, dimension_info in dimensions.items():
+                if isinstance(dimension_info, dict):
+                    _append_reliability_group(
+                        reliability_groups, "Higher-Order",
+                        hoc_name, dimension_name,
+                        dimension_info.get("type", "Reflective"),
+                        dimension_info.get("items", [])
+                    )
 
-    structure = st.session_state["pls_structure"]
+# Backward compatibility: older single-HOC model key
+if not reliability_groups:
+    single_hoc = st.session_state.get("pls_higher_order_model")
+    if isinstance(single_hoc, dict):
+        hoc_name = single_hoc.get("name", "Higher-Order Construct")
+        dimensions = single_hoc.get("dimensions", {})
+        if isinstance(dimensions, dict):
+            for dimension_name, dimension_info in dimensions.items():
+                if isinstance(dimension_info, dict):
+                    _append_reliability_group(
+                        reliability_groups, "Higher-Order",
+                        hoc_name, dimension_name,
+                        dimension_info.get("type", "Reflective"),
+                        dimension_info.get("items", [])
+                    )
 
-    if isinstance(structure, pd.DataFrame):
-
-        structure = structure.copy()
-
-        # Standardize column names
-        structure.columns = [
-            str(col).strip()
-            for col in structure.columns
-        ]
-
-        required_columns = [
-            "Higher_Order_Construct",
-            "Dimension",
-            "Measurement_Type",
-            "Indicator"
-        ]
-
-        if all(
-            col in structure.columns
-            for col in required_columns
-        ):
-
-            for _, row in structure.iterrows():
-
-                hoc = str(
-                    row["Higher_Order_Construct"]
-                ).strip()
-
-                dimension = str(
-                    row["Dimension"]
-                ).strip()
-
-                measurement_type = str(
-                    row["Measurement_Type"]
-                ).strip()
-
-                indicator = str(
-                    row["Indicator"]
-                ).strip()
-
-                if (
-                    hoc
-                    and dimension
-                    and indicator
-                    and indicator in df.columns
-                ):
-
-                    reliability_groups.append({
-
-                        "Model_Type": "Higher-Order",
-
-                        "Construct": hoc,
-
-                        "Dimension": dimension,
-
-                        "Measurement_Type":
-                            measurement_type,
-
-                        "Indicator": indicator
-                    })
-
-
-# =========================================================
-# OPTION 2:
-# SIMPLE CONSTRUCT STRUCTURE
-# =========================================================
-if (
-    not reliability_groups
-    and "pls_constructs" in st.session_state
-):
-
-    simple_constructs = (
-        st.session_state["pls_constructs"]
-    )
-
+# OPTION 3: Simple construct-to-indicator model
+if not reliability_groups:
+    simple_constructs = st.session_state.get("pls_constructs", {})
     if isinstance(simple_constructs, dict):
-
-        for construct, information in (
-            simple_constructs.items()
-        ):
-
-            items = []
-
-            measurement_type = "Reflective"
-
+        for construct_name, information in simple_constructs.items():
             if isinstance(information, dict):
-
-                items = information.get(
-                    "items",
-                    []
-                )
-
-                measurement_type = information.get(
-                    "type",
-                    "Reflective"
-                )
-
-            elif isinstance(information, list):
-
+                items = information.get("items", [])
+                measurement_type = information.get("type", "Reflective")
+            elif isinstance(information, (list, tuple)):
                 items = information
+                measurement_type = "Reflective"
+            else:
+                continue
 
-            for item in items:
-
-                if item in df.columns:
-
-                    reliability_groups.append({
-
-                        "Model_Type": "Simple",
-
-                        "Construct": construct,
-
-                        "Dimension": construct,
-
-                        "Measurement_Type":
-                            measurement_type,
-
-                        "Indicator": item
-                    })
+            _append_reliability_group(
+                reliability_groups, "Simple",
+                construct_name, construct_name,
+                measurement_type, items
+            )
 
 
 # =========================================================
 # NO STRUCTURE FOUND
 # =========================================================
 if not reliability_groups:
-
-    st.error(
-        "❌ No valid questionnaire structure was found."
-    )
-
+    st.error("❌ No valid questionnaire structure was found.")
     st.info(
-        "Please upload your dataset through the Home page "
-        "and make sure the PLS-SEM structure sheet is available, "
-        "or define a Simple PLS-SEM model first."
+        "Your dataset is loaded, but the application has not yet found "
+        "a saved measurement model. Define and save either your simple "
+        "construct model or your Higher-Order Construct model first. "
+        "An Excel structure sheet is optional."
     )
-
     st.stop()
 
 
