@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 st.title("📁 Project Manager")
-st.write("Save your complete AI Data Analysis project and reopen it later.")
+st.write("Your dataset and analysis settings remain available while this browser session is active. Saving a project file is an optional backup for a later session or another device.")
 
 
 # ---------------------------------------------------------
@@ -24,6 +24,11 @@ st.write("Save your complete AI Data Analysis project and reopen it later.")
 # ---------------------------------------------------------
 SESSION_KEYS = [
     "pls_constructs",
+    "dataset_file_name",
+    "dataset_questionnaire_sheet",
+    "dataset_structure_sheet",
+    "dataset_signature",
+    "excel_sheet_names",
     "pls_structural_paths",
     "pls_higher_order_model",
     "pls_higher_order_models",
@@ -51,6 +56,16 @@ def create_project_package(project_name):
     # Save dataframe
     if "df" in st.session_state:
         project_data["df"] = st.session_state["df"]
+
+    for metadata_key in [
+        "dataset_file_name", "dataset_questionnaire_sheet",
+        "dataset_structure_sheet",
+    "dataset_signature",
+    "excel_sheet_names", "excel_sheet_names",
+        "dataset_signature"
+    ]:
+        if metadata_key in st.session_state:
+            project_data[metadata_key] = st.session_state[metadata_key]
 
     # Save structure information
     if "pls_structure" in st.session_state:
@@ -214,7 +229,8 @@ else:
 # ---------------------------------------------------------
 st.divider()
 
-st.header("💾 Save Project")
+st.header("💾 Optional Project Backup")
+st.caption("You do NOT need to download a project file to move between analysis pages. Use this only if you want a backup that can be reopened in a future session.")
 
 project_name = st.text_input(
     "Project Name",
@@ -223,7 +239,7 @@ project_name = st.text_input(
 )
 
 if st.button(
-    "💾 Prepare Project for Download",
+    "💾 Create Optional Project Backup",
     type="primary",
     use_container_width=True
 ):
@@ -282,7 +298,7 @@ st.divider()
 st.header("📂 Open Project")
 
 st.write(
-    "Upload a previously saved `.aida` project file."
+    "Only use this uploader when you want to restore a project backup created earlier. It is not required when your dataset is already active in this session."
 )
 
 uploaded_project = st.file_uploader(
