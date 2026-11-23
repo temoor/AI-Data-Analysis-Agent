@@ -40,48 +40,82 @@ if "df" not in st.session_state:
 df = st.session_state["df"].copy()
 
 # ============================================================
-# CHECK HIGHER-ORDER MODEL
+# CHECK HIGHER-ORDER MODEL(S)
 # ============================================================
 
-if "pls_higher_order_model" not in st.session_state:
+# Prefer the current multi-HOC model collection. Retain compatibility
+# with projects created before multiple HOCs were supported.
+higher_order_models = st.session_state.get(
+    "pls_higher_order_models", {}
+)
 
-    st.warning(
-        "⚠️ No Higher-Order Construct model has been saved yet."
-    )
+# Accept both dictionary and list storage formats used by the
+# higher-order structural/results pages.
+valid_higher_order_models = {}
+if isinstance(higher_order_models, dict):
+    model_items = higher_order_models.items()
+elif isinstance(higher_order_models, list):
+    model_items = [
+        (f"Higher-Order Construct {index}", model)
+        for index, model in enumerate(higher_order_models, start=1)
+    ]
+else:
+    model_items = []
 
+# Keep only valid models with at least one dimension.
+for model_key, model_value in model_items:
+    if not isinstance(model_value, dict):
+        continue
+    model_dimensions = model_value.get("dimensions", {})
+    if isinstance(model_dimensions, dict) and model_dimensions:
+        model_name = model_value.get("name", model_key)
+        valid_higher_order_models[model_name] = model_value
+
+# Backward compatibility with a project containing only the old key.
+legacy_model = st.session_state.get("pls_higher_order_model")
+if isinstance(legacy_model, dict):
+    legacy_name = legacy_model.get("name", "Higher-Order Construct")
+    legacy_dimensions = legacy_model.get("dimensions", {})
+    if (
+        isinstance(legacy_dimensions, dict)
+        and legacy_dimensions
+        and legacy_name not in valid_higher_order_models
+    ):
+        valid_higher_order_models[legacy_name] = legacy_model
+
+if not valid_higher_order_models:
+    st.warning("⚠️ No Higher-Order Construct model has been saved yet.")
     st.info(
-        "Please define and save your model on "
-        "7_2 Higher-Order Construct first."
+        "Please define and save your Higher-Order Construct model(s) "
+        "on **2 Higher Order Construct** first."
     )
-
     st.stop()
 
-higher_order_model = st.session_state[
-    "pls_higher_order_model"
-]
-
-hoc_name = higher_order_model.get(
-    "name",
-    "Higher-Order Construct"
-)
-
-hoc_type = higher_order_model.get(
-    "type",
-    "Reflective"
-)
-
-dimensions = higher_order_model.get(
-    "dimensions",
-    {}
-)
-
-if not dimensions:
-
-    st.error(
-        "❌ The Higher-Order Construct contains no dimensions."
+if len(valid_higher_order_models) > 1:
+    st.subheader("Select Higher-Order Construct")
+    selected_hoc_name = st.selectbox(
+        "Choose the main variable to evaluate",
+        list(valid_higher_order_models.keys()),
+        key="higher_order_measurement_model_selection"
     )
+else:
+    selected_hoc_name = next(iter(valid_higher_order_models))
 
+higher_order_model = valid_higher_order_models[selected_hoc_name]
+
+hoc_name = higher_order_model.get("name", selected_hoc_name)
+hoc_type = higher_order_model.get("type", "Reflective")
+dimensions = higher_order_model.get("dimensions", {})
+
+if not isinstance(dimensions, dict) or not dimensions:
+    st.error("❌ The selected Higher-Order Construct contains no dimensions.")
     st.stop()
+
+st.success(
+    f"Evaluating **{hoc_name}**: "
+    f"{len(dimensions)} dimension(s) and "
+    f"{sum(len(info.get('items', [])) for info in dimensions.values() if isinstance(info, dict))} indicator(s)."
+)
 
 # ============================================================
 # BASIC DATA INFORMATION
